@@ -18,6 +18,8 @@ func TestCollect(t *testing.T) {
 
 func TestSendAll(t *testing.T) {
 	var paths []string
+	var expectedGaugePath = "/update/gauge/Alloc/12.5"
+	var expectedCounterPath = "/update/counter/PollCount/3"
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		paths = append(paths, r.URL.Path)
@@ -26,4 +28,15 @@ func TestSendAll(t *testing.T) {
 	defer srv.Close()
 
 	SendAll(srv.URL, map[string]float64{"Alloc": 12.5}, 3)
+
+	if len(paths) != 2 {
+		t.Fatalf("requests: expected %d but actual is %d", 2, len(paths))
+	}
+
+	if paths[0] != expectedGaugePath {
+		t.Errorf("path: expected %v but actual is %v", expectedGaugePath, paths[0])
+	}
+	if paths[1] != expectedCounterPath {
+		t.Errorf("path: expected %v but actual is %v", expectedCounterPath, paths[1])
+	}
 }
