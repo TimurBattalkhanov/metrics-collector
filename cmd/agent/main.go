@@ -1,18 +1,19 @@
 package main
 
 import (
+	"strings"
 	"time"
 
 	"github.com/TimurBattalkhanov/metrics-collector/internal/agent"
 )
 
-const (
-	pollInterval   = 2 * time.Second
-	reportInterval = 10 * time.Second
-	serverURL      = "http://localhost:8080"
-)
-
 func main() {
+	parseFlags()
+
+	baseURL := serverURL(flagServerAddr)
+	pollInterval := time.Duration(flagPollInterval) * time.Second
+	reportInterval := time.Duration(flagReportInterval) * time.Second
+
 	var pollCount int64
 	var gauges map[string]float64
 	elapsed := time.Duration(0)
@@ -25,8 +26,17 @@ func main() {
 		elapsed += pollInterval
 
 		if elapsed >= reportInterval {
-			agent.SendAll(serverURL, gauges, pollCount)
+			agent.SendAll(baseURL, gauges, pollCount)
 			elapsed = 0
 		}
 	}
+}
+
+func serverURL(url string) string {
+	url = strings.TrimSuffix(url, "/")
+
+	if strings.HasPrefix(url, "http://") || strings.HasPrefix(url, "https://") {
+		return url
+	}
+	return "http://" + url
 }

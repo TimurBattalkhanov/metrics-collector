@@ -8,9 +8,11 @@ import (
 )
 
 func main() {
+	parseFlags()
+
 	store := storage.NewMemStorage()
 
-	err := http.ListenAndServe(":8080", handler.NewRouter(store))
+	err := http.ListenAndServe(flagRunAddr, handler.NewRouter(store))
 	if err != nil {
 		panic(err)
 	}

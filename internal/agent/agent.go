@@ -4,10 +4,15 @@ import (
 	"fmt"
 	"log"
 	"math/rand"
-	"net/http"
 	"runtime"
 	"strconv"
+	"time"
+
+	models "github.com/TimurBattalkhanov/metrics-collector/internal/model"
+	"github.com/go-resty/resty/v2"
 )
+
+var client = resty.New().SetTimeout(time.Second)
 
 func Collect() map[string]float64 {
 	var ms runtime.MemStats
@@ -46,16 +51,21 @@ func Collect() map[string]float64 {
 }
 
 func send(baseURL, metricType, name, value string) error {
-	url := fmt.Sprintf("%s/update/%s/%s/%s", baseURL, metricType, name, value)
+	resp, err := client.R().
+		SetHeader("Content-Type", "text/plain").
+		SetPathParams(map[string]string{
+			"type":  metricType,
+			"name":  name,
+			"value": value,
+		}).
+		Post(baseURL + "/update/{type}/{name}/{value}")
 
-	resp, err := http.Post(url, "text/plain", nil)
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("сервер ответил %d", resp.StatusCode)
+	if resp.IsError() {
+		return fmt.Errorf("сервер ответил %d", resp.StatusCode())
 	}
 	return nil
 }
@@ -63,13 +73,13 @@ func send(baseURL, metricType, name, value string) error {
 func SendAll(baseURL string, gauges map[string]float64, pollCount int64) {
 	for name, v := range gauges {
 		value := strconv.FormatFloat(v, 'f', -1, 64)
-		if err := send(baseURL, "gauge", name, value); err != nil {
+		if err := send(baseURL, models.Gauge, name, value); err != nil {
 			log.Println("ошибка отправки:", err) // не выходим из цикла
 		}
 	}
 
 	value := strconv.FormatInt(pollCount, 10)
-	if err := send(baseURL, "counter", "PollCount", value); err != nil {
+	if err := send(baseURL, models.Counter, "PollCount", value); err != nil {
 		log.Println("ошибка отправки:", err)
 	}
 }
