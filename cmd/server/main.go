@@ -10,11 +10,7 @@ import (
 func main() {
 	store := storage.NewMemStorage()
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/update/", handler.UpdateHandler(store))
-	mux.HandleFunc("/update", handler.UpdateHandler(store))
-
-	err := http.ListenAndServe(":8080", mux)
+	err := http.ListenAndServe(":8080", handler.NewRouter(store))
 	if err != nil {
 		panic(err)
 	}
