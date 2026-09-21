@@ -5,6 +5,7 @@ import (
 
 	"github.com/TimurBattalkhanov/metrics-collector/internal/handler"
 	storage "github.com/TimurBattalkhanov/metrics-collector/internal/repository"
+	"go.uber.org/zap"
 )
 
 func main() {
@@ -12,7 +13,15 @@ func main() {
 
 	store := storage.NewMemStorage()
 
-	err := http.ListenAndServe(flagRunAddr, handler.NewRouter(store))
+	logger, err := zap.NewDevelopment()
+	if err != nil {
+		panic(err)
+	}
+	defer logger.Sync()
+
+	sugarLogger := logger.Sugar()
+
+	err = http.ListenAndServe(flagRunAddr, handler.NewRouter(store, sugarLogger))
 	if err != nil {
 		panic(err)
 	}

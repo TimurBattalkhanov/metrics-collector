@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/TimurBattalkhanov/metrics-collector/internal/repository"
+	"go.uber.org/zap"
 )
 
 func TestUpdateHandler(t *testing.T) {
@@ -110,7 +111,9 @@ func prepareServerAndRequest(storage repository.Storage, method string, path str
 	req := httptest.NewRequest(method, path, body)
 	rec := httptest.NewRecorder()
 
-	NewRouter(storage).ServeHTTP(rec, req)
+	logger := zap.NewNop().Sugar()
+
+	NewRouter(storage, logger).ServeHTTP(rec, req)
 
 	return rec.Result()
 }
