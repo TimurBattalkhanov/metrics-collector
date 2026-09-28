@@ -20,6 +20,7 @@ func main() {
 	defer logger.Sync()
 
 	sugarLogger := logger.Sugar()
+	zap.ReplaceGlobals(logger)
 
 	err = http.ListenAndServe(flagRunAddr, handler.NewRouter(store, sugarLogger))
 	if err != nil {

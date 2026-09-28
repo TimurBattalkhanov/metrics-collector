@@ -1,8 +1,8 @@
 package repository
 
 type Storage interface {
-	UpdateGauge(name string, value float64)
-	UpdateCounter(name string, value int64)
+	UpdateGauge(name string, value float64) float64
+	UpdateCounter(name string, value int64) int64
 	GetGauge(name string) (float64, bool)
 	GetCounter(name string) (int64, bool)
 	GetGauges() map[string]float64
@@ -22,12 +22,14 @@ func NewMemStorage() *MemStorage {
 	return &MemStorage
 }
 
-func (m *MemStorage) UpdateGauge(name string, value float64) {
+func (m *MemStorage) UpdateGauge(name string, value float64) float64 {
 	m.gauges[name] = value
+	return m.gauges[name]
 }
 
-func (m *MemStorage) UpdateCounter(name string, value int64) {
+func (m *MemStorage) UpdateCounter(name string, value int64) int64 {
 	m.counters[name] += value
+	return m.counters[name]
 }
 
 func (m *MemStorage) GetGauge(name string) (float64, bool) {

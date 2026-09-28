@@ -4,9 +4,11 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/TimurBattalkhanov/metrics-collector/internal/repository"
+	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap"
 )
 
@@ -49,9 +51,9 @@ func TestGetHandler(t *testing.T) {
 	}{
 		{"Valid counter value", http.MethodGet, "/value/counter/PollCount", http.StatusOK, "1"},
 		{"Valid gauge value", http.MethodGet, "/value/gauge/Alloc", http.StatusOK, "100"},
-		{"Unknown type", http.MethodGet, "/value/unknown/x", http.StatusNotFound, ""},
+		{"Unknown type", http.MethodGet, "/value/unknown/x", http.StatusBadRequest, ""},
 		{"When no value", http.MethodGet, "/value/gauge/HeapAlloc", http.StatusNotFound, ""},
-		{"No metrics name specified", http.MethodGet, "/value", http.StatusNotFound, "404 page not found\n"},
+		{"No metrics name specified", http.MethodGet, "/value", http.StatusMethodNotAllowed, ""},
 		{"method POST not allowed", http.MethodPost, "/value/counter/x", http.StatusMethodNotAllowed, ""},
 	}
 
@@ -104,6 +106,100 @@ func TestDefaultHandler_ReturnTableWithMetrics(t *testing.T) {
 
 	if string(body) != wantBody {
 		t.Errorf("тело: получили %q, ожидали %q", body, wantBody)
+	}
+}
+
+func TestUpdatePostHandler(t *testing.T) {
+	tests := []struct {
+		name       string
+		method     string
+		body       string
+		wantStatus int
+	}{
+		{"Valid counter", http.MethodPost, `{"id":"someMetric","type":"counter","delta":527}`, http.StatusOK},
+		{"Valid gauge", http.MethodPost, `{"id":"Alloc","type":"gauge","value":12.5}`, http.StatusOK},
+		{"Unknown type", http.MethodPost, `{"id":"x","type":"unknown","delta":1}`, http.StatusBadRequest},
+		{"Gauge without value", http.MethodPost, `{"id":"x","type":"gauge"}`, http.StatusBadRequest},
+		{"Counter without delta", http.MethodPost, `{"id":"x","type":"counter", "value": 1.5}`, http.StatusBadRequest},
+		{"Invalid Json", http.MethodPost, `{"id":x,"type:gauge}`, http.StatusBadRequest},
+		{"method GET not allowed", http.MethodGet, `{}`, http.StatusMethodNotAllowed},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := repository.NewMemStorage()
+
+			reqBody := strings.NewReader(tt.body)
+			res := prepareServerAndRequest(store, tt.method, `/update`, reqBody)
+			defer res.Body.Close()
+
+			if res.StatusCode != tt.wantStatus {
+				t.Errorf("получили %d, ожидали %d", res.StatusCode, tt.wantStatus)
+			}
+
+			if http.StatusOK == tt.wantStatus {
+				if res.Header.Get("Content-Type") != "application/json" {
+					t.Errorf("Ожидали Content-Type %q, а получили %q", "application/json", res.Header.Get("Content-Type"))
+				}
+				if strings.Contains(tt.body, `"type":"counter"`) {
+					if len(store.GetCounters()) == 0 {
+						t.Errorf("Ожидалась 1 запись counter, а получили %d", len(store.GetCounters()))
+					}
+				}
+				if strings.Contains(tt.body, `"type":"gauge"`) {
+					if len(store.GetGauges()) == 0 {
+						t.Errorf("Ожидалась 1 запись gauge, а получили %d", len(store.GetGauges()))
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestValuePostHandler(t *testing.T) {
+	tests := []struct {
+		name       string
+		method     string
+		body       string
+		wantStatus int
+		wantBody   string
+	}{
+		{"Valid counter", http.MethodPost, `{"id":"PollCount","type":"counter"}`, http.StatusOK, `{"id":"PollCount","type":"counter","delta":5}`},
+		{"Valid gauge", http.MethodPost, `{"id":"Alloc","type":"gauge"}`, http.StatusOK, `{"id":"Alloc","type":"gauge","value":12.5}`},
+		{"Stored value overrides request value", http.MethodPost, `{"id":"Alloc","type":"gauge","value":1}`, http.StatusOK, `{"id":"Alloc","type":"gauge","value":12.5}`},
+		{"Unknown metric", http.MethodPost, `{"id":"HeapAlloc","type":"gauge"}`, http.StatusNotFound, ""},
+		{"Wrong type for metric", http.MethodPost, `{"id":"PollCount","type":"gauge"}`, http.StatusNotFound, ""},
+		{"Unknown type", http.MethodPost, `{"id":"Alloc","type":"unknown"}`, http.StatusBadRequest, ""},
+		{"Invalid Json", http.MethodPost, `{"id":x,"type:gauge}`, http.StatusBadRequest, ""},
+		{"method GET not allowed", http.MethodGet, `{}`, http.StatusMethodNotAllowed, ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := repository.NewMemStorage()
+			store.UpdateCounter("PollCount", 5)
+			store.UpdateGauge("Alloc", 12.5)
+
+			reqBody := strings.NewReader(tt.body)
+			res := prepareServerAndRequest(store, tt.method, `/value`, reqBody)
+			defer res.Body.Close()
+
+			if res.StatusCode != tt.wantStatus {
+				t.Errorf("получили %d, ожидали %d", res.StatusCode, tt.wantStatus)
+			}
+
+			if http.StatusOK == tt.wantStatus {
+				if res.Header.Get("Content-Type") != "application/json" {
+					t.Errorf("Ожидали Content-Type %q, а получили %q", "application/json", res.Header.Get("Content-Type"))
+				}
+
+				body, err := io.ReadAll(res.Body)
+				if err != nil {
+					t.Fatal(err)
+				}
+				assert.JSONEq(t, tt.wantBody, string(body))
+			}
+		})
 	}
 }
 
