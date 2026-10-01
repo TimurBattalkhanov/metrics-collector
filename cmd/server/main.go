@@ -2,7 +2,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/TimurBattalkhanov/metrics-collector/internal/handler"
@@ -13,8 +17,8 @@ import (
 func main() {
 	parseFlags()
 
-	isSync := flagStoreInterval == 0
-	store := storage.NewFileStorage(storage.NewMemStorage(), flagFileStoragePath, isSync)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	logger, err := zap.NewDevelopment()
 	if err != nil {
@@ -25,6 +29,9 @@ func main() {
 	sugarLogger := logger.Sugar()
 	zap.ReplaceGlobals(logger)
 
+	isSync := flagStoreInterval == 0
+	store := storage.NewFileStorage(storage.NewMemStorage(), flagFileStoragePath, isSync)
+
 	if flagRestore {
 		err := store.Load()
 		if err != nil {
@@ -33,10 +40,28 @@ func main() {
 	}
 
 	if !isSync {
-		go store.RunIntervalSave(context.Background(), time.Duration(flagStoreInterval)*time.Second)
+		go store.RunIntervalSave(ctx, time.Duration(flagStoreInterval)*time.Second)
 	}
 
-	if err = http.ListenAndServe(flagRunAddr, handler.NewRouter(store, sugarLogger)); err != nil {
-		panic(err)
+	srv := &http.Server{Addr: flagRunAddr, Handler: handler.NewRouter(store, sugarLogger)}
+
+	go func() {
+		err := srv.ListenAndServe()
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			zap.S().Fatalw("failed to start server", "error", err)
+		}
+	}()
+	<-ctx.Done()
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	err = srv.Shutdown(shutdownCtx)
+	if err != nil {
+		zap.S().Errorw("failed to shutdown server", "error", err)
+	}
+	err = store.Save()
+	if err != nil {
+		zap.S().Fatalw("failed to save store", "error", err)
 	}
 }

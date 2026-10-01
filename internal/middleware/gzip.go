@@ -8,21 +8,21 @@ import (
 )
 
 type compressReader struct {
-	r   io.ReadCloser
-	gzr *gzip.Reader
+	r      io.ReadCloser
+	reader *gzip.Reader
 }
 
 func newCompressReader(r io.ReadCloser) (*compressReader, error) {
-	gzr, err := gzip.NewReader(r)
+	reader, err := gzip.NewReader(r)
 	if err != nil {
 		return nil, err
 	}
-	return &compressReader{r: r, gzr: gzr}, nil
+	return &compressReader{r: r, reader: reader}, nil
 }
 
 type compressWriter struct {
 	w           http.ResponseWriter
-	gzr         *gzip.Writer
+	writer      *gzip.Writer
 	wroteHeader bool
 }
 
@@ -41,7 +41,7 @@ func (c *compressWriter) WriteHeader(statusCode int) {
 	if strings.HasPrefix(ct, "application/json") || strings.HasPrefix(ct, "text/html") {
 		c.w.Header().Set("Content-Encoding", "gzip")
 		c.w.Header().Del("Content-Length")
-		c.gzr = gzip.NewWriter(c.w)
+		c.writer = gzip.NewWriter(c.w)
 	}
 	c.w.WriteHeader(statusCode)
 }
@@ -50,23 +50,23 @@ func (c *compressWriter) Write(p []byte) (int, error) {
 	if !c.wroteHeader {
 		c.WriteHeader(http.StatusOK)
 	}
-	if c.gzr != nil {
-		return c.gzr.Write(p)
+	if c.writer != nil {
+		return c.writer.Write(p)
 	}
 	return c.w.Write(p)
 }
 
 func (c *compressWriter) Close() error {
-	if c.gzr != nil {
-		return c.gzr.Close()
+	if c.writer != nil {
+		return c.writer.Close()
 	}
 	return nil
 }
 
-func (c *compressReader) Read(p []byte) (int, error) { return c.gzr.Read(p) }
+func (c *compressReader) Read(p []byte) (int, error) { return c.reader.Read(p) }
 
 func (c *compressReader) Close() error {
-	if err := c.gzr.Close(); err != nil {
+	if err := c.reader.Close(); err != nil {
 		return err
 	}
 	return c.r.Close()

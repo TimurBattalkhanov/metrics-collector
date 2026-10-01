@@ -12,16 +12,16 @@ import (
 )
 
 type FileStorage struct {
-	*MemStorage
+	store    Storage
 	path     string
 	syncSave bool
 }
 
-func NewFileStorage(storage *MemStorage, path string, syncSave bool) *FileStorage {
+func NewFileStorage(storage Storage, path string, syncSave bool) *FileStorage {
 	return &FileStorage{
-		path:       path,
-		syncSave:   syncSave,
-		MemStorage: storage,
+		path:     path,
+		syncSave: syncSave,
+		store:    storage,
 	}
 }
 
@@ -42,8 +42,8 @@ func (fs *FileStorage) RunIntervalSave(ctx context.Context, interval time.Durati
 }
 
 func (fs *FileStorage) Save() error {
-	gauges := fs.MemStorage.GetGauges()
-	counters := fs.MemStorage.GetCounters()
+	gauges := fs.store.GetGauges()
+	counters := fs.store.GetCounters()
 	metrics := make([]models.Metrics, 0, len(gauges)+len(counters))
 	for k, v := range gauges {
 		metric := models.Metrics{
@@ -93,11 +93,11 @@ func (fs *FileStorage) Load() error {
 
 	for _, v := range metrics {
 		if v.MType == models.Gauge && v.Value != nil {
-			fs.MemStorage.UpdateGauge(v.ID, *v.Value)
+			fs.store.UpdateGauge(v.ID, *v.Value)
 			continue
 		}
 		if v.MType == models.Counter && v.Delta != nil {
-			fs.MemStorage.UpdateCounter(v.ID, *v.Delta)
+			fs.store.UpdateCounter(v.ID, *v.Delta)
 		}
 	}
 	return nil
@@ -178,7 +178,7 @@ func (c *Consumer) Close() error {
 }
 
 func (fs *FileStorage) UpdateGauge(id string, value float64) float64 {
-	v := fs.MemStorage.UpdateGauge(id, value)
+	v := fs.store.UpdateGauge(id, value)
 	if fs.syncSave {
 		if err := fs.Save(); err != nil {
 			zap.S().Errorf("failed to save metrics: %s", err.Error())
@@ -188,11 +188,27 @@ func (fs *FileStorage) UpdateGauge(id string, value float64) float64 {
 }
 
 func (fs *FileStorage) UpdateCounter(id string, value int64) int64 {
-	v := fs.MemStorage.UpdateCounter(id, value)
+	v := fs.store.UpdateCounter(id, value)
 	if fs.syncSave {
 		if err := fs.Save(); err != nil {
 			zap.S().Errorf("failed to save metrics: %s", err.Error())
 		}
 	}
 	return v
+}
+
+func (fs *FileStorage) GetGauges() map[string]float64 {
+	return fs.store.GetGauges()
+}
+
+func (fs *FileStorage) GetCounters() map[string]int64 {
+	return fs.store.GetCounters()
+}
+
+func (fs *FileStorage) GetGauge(name string) (float64, bool) {
+	return fs.store.GetGauge(name)
+}
+
+func (fs *FileStorage) GetCounter(name string) (int64, bool) {
+	return fs.store.GetCounter(name)
 }
