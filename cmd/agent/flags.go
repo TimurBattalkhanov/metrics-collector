@@ -3,54 +3,49 @@ package main
 import (
 	"flag"
 	"log"
-
-	"github.com/caarlos0/env/v6"
-)
-
-var (
-	flagServerAddr     string
-	flagReportInterval int
-	flagPollInterval   int
+	"os"
+	"strconv"
 )
 
 type AgentConfig struct {
-	Address        string `env:"ADDRESS"`
-	ReportInterval int    `env:"REPORT_INTERVAL"`
-	PollInterval   int    `env:"POLL_INTERVAL"`
+	Address        string
+	ReportInterval int
+	PollInterval   int
 }
 
-func parseFlags() {
-	flag.StringVar(&flagServerAddr, "a", "localhost:8080", "address and port of the metrics server")
-	flag.IntVar(&flagReportInterval, "r", 10, "report interval in seconds")
-	flag.IntVar(&flagPollInterval, "p", 2, "poll interval in seconds")
+func NewAgentConfig() AgentConfig {
+	var cfg AgentConfig
 
+	flag.StringVar(&cfg.Address, "a", "localhost:8080", "address and port of the metrics server")
+	flag.IntVar(&cfg.ReportInterval, "r", 10, "report interval in seconds")
+	flag.IntVar(&cfg.PollInterval, "p", 2, "poll interval in seconds")
 	flag.Parse()
 
-	var cfg AgentConfig
-	err := env.Parse(&cfg)
-	if err != nil {
-		log.Fatal(err)
+	if address, ok := os.LookupEnv("ADDRESS"); ok {
+		cfg.Address = address
 	}
 
-	if cfg.Address != "" {
-		flagServerAddr = cfg.Address
+	if reportIntervalRaw, ok := os.LookupEnv("REPORT_INTERVAL"); ok {
+		reportInterval, err := strconv.Atoi(reportIntervalRaw)
+		if err != nil {
+			log.Fatalf("invalid REPORT_INTERVAL: %v", err)
+		}
+		cfg.ReportInterval = reportInterval
 	}
 
-	if cfg.ReportInterval != 0 {
-		flagReportInterval = cfg.ReportInterval
+	if pollIntervalRaw, ok := os.LookupEnv("POLL_INTERVAL"); ok {
+		pollInterval, err := strconv.Atoi(pollIntervalRaw)
+		if err != nil {
+			log.Fatalf("invalid POLL_INTERVAL: %v", err)
+		}
+		cfg.PollInterval = pollInterval
 	}
 
-	if cfg.PollInterval != 0 {
-		flagPollInterval = cfg.PollInterval
+	if cfg.PollInterval <= 0 {
+		log.Fatalf("poll interval must be greater than 0, provided %d", cfg.PollInterval)
 	}
-
-	log.Printf("config: server=%s reportInterval=%d pollInterval=%d",
-		flagServerAddr, flagReportInterval, flagPollInterval)
-
-	if flagPollInterval <= 0 {
-		log.Fatalf("poll interval must be greater than 0, provided %d", flagPollInterval)
+	if cfg.ReportInterval <= 0 {
+		log.Fatalf("report interval must be greater than 0, provided %d", cfg.ReportInterval)
 	}
-	if flagReportInterval <= 0 {
-		log.Fatalf("report interval must be greater than 0, provided %d", flagReportInterval)
-	}
+	return cfg
 }

@@ -9,7 +9,8 @@ import (
 )
 
 func main() {
-	parseFlags()
+	cfg := NewAgentConfig()
+
 	logger, err := zap.NewDevelopment()
 	if err != nil {
 		panic(err)
@@ -17,9 +18,9 @@ func main() {
 	defer logger.Sync()
 	zap.ReplaceGlobals(logger)
 
-	baseURL := serverURL(flagServerAddr)
-	pollInterval := time.Duration(flagPollInterval) * time.Second
-	reportInterval := time.Duration(flagReportInterval) * time.Second
+	baseURL := serverURL(cfg.Address)
+	pollInterval := time.Duration(cfg.PollInterval) * time.Second
+	reportInterval := time.Duration(cfg.ReportInterval) * time.Second
 
 	var pollCount int64
 	var gauges map[string]float64

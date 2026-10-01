@@ -15,7 +15,7 @@ import (
 )
 
 func main() {
-	parseFlags()
+	cfg := NewServerConfig()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -29,10 +29,10 @@ func main() {
 	sugarLogger := logger.Sugar()
 	zap.ReplaceGlobals(logger)
 
-	isSync := flagStoreInterval == 0
-	store := storage.NewFileStorage(storage.NewMemStorage(), flagFileStoragePath, isSync)
+	isSync := cfg.StoreInterval == 0
+	store := storage.NewFileStorage(storage.NewMemStorage(), cfg.FileStoragePath, isSync)
 
-	if flagRestore {
+	if cfg.Restore {
 		err := store.Load()
 		if err != nil {
 			zap.S().Fatalw("failed to restore store", "error", err)
@@ -40,10 +40,10 @@ func main() {
 	}
 
 	if !isSync {
-		go store.RunIntervalSave(ctx, time.Duration(flagStoreInterval)*time.Second)
+		go store.RunIntervalSave(ctx, time.Duration(cfg.StoreInterval)*time.Second)
 	}
 
-	srv := &http.Server{Addr: flagRunAddr, Handler: handler.NewRouter(store, sugarLogger)}
+	srv := &http.Server{Addr: cfg.Address, Handler: handler.NewRouter(store, sugarLogger)}
 
 	go func() {
 		err := srv.ListenAndServe()
