@@ -5,10 +5,17 @@ import (
 	"time"
 
 	"github.com/TimurBattalkhanov/metrics-collector/internal/agent"
+	"go.uber.org/zap"
 )
 
 func main() {
 	parseFlags()
+	logger, err := zap.NewDevelopment()
+	if err != nil {
+		panic(err)
+	}
+	defer logger.Sync()
+	zap.ReplaceGlobals(logger)
 
 	baseURL := serverURL(flagServerAddr)
 	pollInterval := time.Duration(flagPollInterval) * time.Second

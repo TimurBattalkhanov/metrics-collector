@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -10,15 +11,19 @@ import (
 	models "github.com/TimurBattalkhanov/metrics-collector/internal/model"
 	"github.com/TimurBattalkhanov/metrics-collector/internal/repository"
 	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 	"go.uber.org/zap"
 )
 
 func NewRouter(s repository.Storage, logger *zap.SugaredLogger) http.Handler {
 	r := chi.NewRouter()
 	r.Use(middlewares.HTTPLogging(logger))
+	r.Use(middleware.StripSlashes)
 	r.Get("/", DefaultHandler(s))
 	r.Get("/value/{type}/{name}", GetHandler(s))
 	r.Post("/update/{type}/{name}/{value}", UpdateHandler(s))
+	r.Post("/update", UpdatePostHandler(s))
+	r.Post("/value", ValuePostHandler(s))
 	return r
 }
 
@@ -77,7 +82,7 @@ func GetHandler(s repository.Storage) http.HandlerFunc {
 			}
 			value = strconv.FormatInt(v, 10)
 		default:
-			w.WriteHeader(http.StatusNotFound)
+			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -104,5 +109,90 @@ func DefaultHandler(s repository.Storage) http.HandlerFunc {
 				models.Counter, name, v)
 		}
 		fmt.Fprintln(w, "</table></body></html>")
+	}
+}
+
+func UpdatePostHandler(s repository.Storage) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req models.Metrics
+		dec := json.NewDecoder(r.Body)
+		if err := dec.Decode(&req); err != nil {
+			zap.L().Error("Error decoding request", zap.Error(err))
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+
+		metricType := req.MType
+		name := req.ID
+
+		switch metricType {
+		case models.Gauge:
+			if req.Value == nil {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			v := s.UpdateGauge(name, *req.Value)
+			req.Value = &v
+		case models.Counter:
+			if req.Delta == nil {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			v := s.UpdateCounter(name, *req.Delta)
+			req.Delta = &v
+		default:
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		enc := json.NewEncoder(w)
+		if err := enc.Encode(req); err != nil {
+			zap.L().Error("error encoding response", zap.Error(err))
+			return
+		}
+	}
+}
+
+func ValuePostHandler(s repository.Storage) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req models.Metrics
+		dec := json.NewDecoder(r.Body)
+		if err := dec.Decode(&req); err != nil {
+			zap.L().Error("Error decoding request", zap.Error(err))
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		metricType := req.MType
+		name := req.ID
+
+		switch metricType {
+		case models.Gauge:
+			v, ok := s.GetGauge(name)
+			if !ok {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			req.Value = &v
+		case models.Counter:
+			v, ok := s.GetCounter(name)
+			if !ok {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			req.Delta = &v
+		default:
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		enc := json.NewEncoder(w)
+		if err := enc.Encode(req); err != nil {
+			zap.L().Error("error encoding response", zap.Error(err))
+			return
+		}
+		zap.L().Info("sending HTTP 200 response")
 	}
 }

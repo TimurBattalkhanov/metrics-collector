@@ -2,14 +2,13 @@ package agent
 
 import (
 	"fmt"
-	"log"
 	"math/rand"
 	"runtime"
-	"strconv"
 	"time"
 
 	models "github.com/TimurBattalkhanov/metrics-collector/internal/model"
 	"github.com/go-resty/resty/v2"
+	"go.uber.org/zap"
 )
 
 var client = resty.New().SetTimeout(time.Second)
@@ -50,15 +49,11 @@ func Collect() map[string]float64 {
 	}
 }
 
-func send(baseURL, metricType, name, value string) error {
+func send(baseURL string, req models.Metrics) error {
 	resp, err := client.R().
-		SetHeader("Content-Type", "text/plain").
-		SetPathParams(map[string]string{
-			"type":  metricType,
-			"name":  name,
-			"value": value,
-		}).
-		Post(baseURL + "/update/{type}/{name}/{value}")
+		SetHeader("Content-Type", "application/json").
+		SetBody(req).
+		Post(baseURL + "/update")
 
 	if err != nil {
 		return err
@@ -72,14 +67,22 @@ func send(baseURL, metricType, name, value string) error {
 
 func SendAll(baseURL string, gauges map[string]float64, pollCount int64) {
 	for name, v := range gauges {
-		value := strconv.FormatFloat(v, 'f', -1, 64)
-		if err := send(baseURL, models.Gauge, name, value); err != nil {
-			log.Println("ошибка отправки:", err) // не выходим из цикла
+		req := models.Metrics{
+			ID:    name,
+			MType: models.Gauge,
+			Value: &v,
+		}
+		if err := send(baseURL, req); err != nil {
+			zap.L().Error("ошибка отправки", zap.Error(err))
 		}
 	}
 
-	value := strconv.FormatInt(pollCount, 10)
-	if err := send(baseURL, models.Counter, "PollCount", value); err != nil {
-		log.Println("ошибка отправки:", err)
+	req := models.Metrics{
+		ID:    "PollCount",
+		MType: models.Counter,
+		Delta: &pollCount,
+	}
+	if err := send(baseURL, req); err != nil {
+		zap.L().Error("ошибка отправки", zap.Error(err))
 	}
 }
