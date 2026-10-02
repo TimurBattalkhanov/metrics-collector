@@ -6,13 +6,16 @@ import (
 	"net/http"
 	"strconv"
 
+	middlewares "github.com/TimurBattalkhanov/metrics-collector/internal/middleware"
 	models "github.com/TimurBattalkhanov/metrics-collector/internal/model"
 	"github.com/TimurBattalkhanov/metrics-collector/internal/repository"
 	"github.com/go-chi/chi/v5"
+	"go.uber.org/zap"
 )
 
-func NewRouter(s repository.Storage) http.Handler {
+func NewRouter(s repository.Storage, logger *zap.SugaredLogger) http.Handler {
 	r := chi.NewRouter()
+	r.Use(middlewares.HTTPLogging(logger))
 	r.Get("/", DefaultHandler(s))
 	r.Get("/value/{type}/{name}", GetHandler(s))
 	r.Post("/update/{type}/{name}/{value}", UpdateHandler(s))
