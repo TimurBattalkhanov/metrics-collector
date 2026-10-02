@@ -11,7 +11,9 @@ import (
 	"go.uber.org/zap"
 )
 
-var client = resty.New().SetTimeout(time.Second)
+var client = resty.New().
+	SetTimeout(time.Second).
+	OnBeforeRequest(gzipCompressBody)
 
 func Collect() map[string]float64 {
 	var ms runtime.MemStats

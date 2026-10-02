@@ -18,6 +18,7 @@ import (
 func NewRouter(s repository.Storage, logger *zap.SugaredLogger) http.Handler {
 	r := chi.NewRouter()
 	r.Use(middlewares.HTTPLogging(logger))
+	r.Use(middlewares.GzipMiddleware)
 	r.Use(middleware.StripSlashes)
 	r.Get("/", DefaultHandler(s))
 	r.Get("/value/{type}/{name}", GetHandler(s))
