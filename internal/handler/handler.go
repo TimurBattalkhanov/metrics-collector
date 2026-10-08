@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,13 +16,14 @@ import (
 	"go.uber.org/zap"
 )
 
-func NewRouter(s repository.Storage, logger *zap.SugaredLogger) http.Handler {
+func NewRouter(s repository.Storage, db *sql.DB, logger *zap.SugaredLogger) http.Handler {
 	r := chi.NewRouter()
 	r.Use(middlewares.HTTPLogging(logger))
 	r.Use(middlewares.GzipMiddleware)
 	r.Use(middleware.StripSlashes)
 	r.Get("/", DefaultHandler(s))
 	r.Get("/value/{type}/{name}", GetHandler(s))
+	r.Get("/ping", PingHandler(db))
 	r.Post("/update/{type}/{name}/{value}", UpdateHandler(s))
 	r.Post("/update", UpdatePostHandler(s))
 	r.Post("/value", ValuePostHandler(s))
@@ -195,5 +197,17 @@ func ValuePostHandler(s repository.Storage) http.HandlerFunc {
 			return
 		}
 		zap.L().Info("sending HTTP 200 response")
+	}
+}
+
+func PingHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		err := db.PingContext(r.Context())
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
 	}
 }
