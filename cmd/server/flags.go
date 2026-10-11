@@ -12,6 +12,7 @@ type ServerConfig struct {
 	StoreInterval   int
 	FileStoragePath string
 	Restore         bool
+	DatabaseDSN     string
 }
 
 func NewServerConfig() ServerConfig {
@@ -20,6 +21,7 @@ func NewServerConfig() ServerConfig {
 	flag.IntVar(&cfg.StoreInterval, "i", 300, "store interval in seconds")
 	flag.StringVar(&cfg.FileStoragePath, "f", "/tmp/metrics-store.json", "file storage path")
 	flag.BoolVar(&cfg.Restore, "r", false, "restore files")
+	flag.StringVar(&cfg.DatabaseDSN, "d", "", "database DSN") // value example postgres://user:password@localhost:5432/postgres
 	flag.Parse()
 
 	if address, ok := os.LookupEnv("ADDRESS"); ok {
@@ -48,6 +50,10 @@ func NewServerConfig() ServerConfig {
 
 	if cfg.StoreInterval < 0 {
 		log.Fatalf("store interval must be greater than or equal to 0, provided %d", cfg.StoreInterval)
+	}
+
+	if dbDSN, ok := os.LookupEnv("DATABASE_DSN"); ok {
+		cfg.DatabaseDSN = dbDSN
 	}
 
 	return cfg
