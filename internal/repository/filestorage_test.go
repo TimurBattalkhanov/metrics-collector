@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -8,34 +9,36 @@ import (
 )
 
 func TestFileStorageSaveAndLoad(t *testing.T) {
+	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "metrics.json")
 
 	store := NewFileStorage(NewMemStorage(), path, false)
-	store.UpdateGauge("Alloc", 12.5)
-	store.UpdateCounter("PollCount", 3)
-	store.UpdateCounter("PollCount", 2)
+	store.UpdateGauge(ctx, "Alloc", 12.5)
+	store.UpdateCounter(ctx, "PollCount", 3)
+	store.UpdateCounter(ctx, "PollCount", 2)
 
-	if err := store.Save(); err != nil {
+	if err := store.Save(ctx); err != nil {
 		t.Fatal(err)
 	}
 
 	restored := NewFileStorage(NewMemStorage(), path, false)
-	if err := restored.Load(); err != nil {
+	if err := restored.Load(ctx); err != nil {
 		t.Fatal(err)
 	}
 
 	wantGauges := map[string]float64{"Alloc": 12.5}
 	wantCounters := map[string]int64{"PollCount": 5}
 
-	if got := restored.GetGauges(); !reflect.DeepEqual(got, wantGauges) {
+	if got, _ := restored.GetGauges(ctx); !reflect.DeepEqual(got, wantGauges) {
 		t.Errorf("gauges: получили %v, ожидали %v", got, wantGauges)
 	}
-	if got := restored.GetCounters(); !reflect.DeepEqual(got, wantCounters) {
+	if got, _ := restored.GetCounters(ctx); !reflect.DeepEqual(got, wantCounters) {
 		t.Errorf("counters: получили %v, ожидали %v", got, wantCounters)
 	}
 }
 
 func TestFileStorageLoad(t *testing.T) {
+	ctx := context.Background()
 	tests := []struct {
 		name         string
 		createFile   bool
@@ -96,15 +99,15 @@ func TestFileStorageLoad(t *testing.T) {
 			}
 
 			store := NewFileStorage(NewMemStorage(), path, false)
-			err := store.Load()
+			err := store.Load(ctx)
 
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ошибка: получили %v, ожидали ошибку: %v", err, tt.wantErr)
 			}
-			if got := store.GetGauges(); !reflect.DeepEqual(got, tt.wantGauges) {
+			if got, _ := store.GetGauges(ctx); !reflect.DeepEqual(got, tt.wantGauges) {
 				t.Errorf("gauges: получили %v, ожидали %v", got, tt.wantGauges)
 			}
-			if got := store.GetCounters(); !reflect.DeepEqual(got, tt.wantCounters) {
+			if got, _ := store.GetCounters(ctx); !reflect.DeepEqual(got, tt.wantCounters) {
 				t.Errorf("counters: получили %v, ожидали %v", got, tt.wantCounters)
 			}
 		})
@@ -112,6 +115,7 @@ func TestFileStorageLoad(t *testing.T) {
 }
 
 func TestFileStorageLoadDoesNotRewriteFile(t *testing.T) {
+	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "metrics.json")
 	content := `[{"id":"Alloc","type":"gauge","value":1.5}]`
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
@@ -119,7 +123,7 @@ func TestFileStorageLoadDoesNotRewriteFile(t *testing.T) {
 	}
 
 	store := NewFileStorage(NewMemStorage(), path, true)
-	if err := store.Load(); err != nil {
+	if err := store.Load(ctx); err != nil {
 		t.Fatal(err)
 	}
 
@@ -133,6 +137,7 @@ func TestFileStorageLoadDoesNotRewriteFile(t *testing.T) {
 }
 
 func TestFileStorageSyncSave(t *testing.T) {
+	ctx := context.Background()
 	tests := []struct {
 		name     string
 		syncSave bool
@@ -142,19 +147,19 @@ func TestFileStorageSyncSave(t *testing.T) {
 		{
 			"Sync gauge",
 			true,
-			func(s *FileStorage) { s.UpdateGauge("Alloc", 12.5) },
+			func(s *FileStorage) { s.UpdateGauge(ctx, "Alloc", 12.5) },
 			`[{"id":"Alloc","type":"gauge","value":12.5}]` + "\n",
 		},
 		{
 			"Sync counter",
 			true,
-			func(s *FileStorage) { s.UpdateCounter("PollCount", 3) },
+			func(s *FileStorage) { s.UpdateCounter(ctx, "PollCount", 3) },
 			`[{"id":"PollCount","type":"counter","delta":3}]` + "\n",
 		},
 		{
 			"Without sync file is not created",
 			false,
-			func(s *FileStorage) { s.UpdateGauge("Alloc", 12.5) },
+			func(s *FileStorage) { s.UpdateGauge(ctx, "Alloc", 12.5) },
 			"",
 		},
 	}

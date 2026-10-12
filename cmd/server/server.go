@@ -12,7 +12,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func newServer(cfg ServerConfig, store *storage.FileStorage, db *sql.DB, logger *zap.SugaredLogger) *http.Server {
+func newServer(cfg ServerConfig, store storage.Storage, db *sql.DB, logger *zap.SugaredLogger) *http.Server {
 	return &http.Server{Addr: cfg.Address, Handler: handler.NewRouter(store, db, logger)}
 }
 
@@ -23,7 +23,7 @@ func runServer(srv *http.Server) {
 	}
 }
 
-func shutdown(srv *http.Server, store *storage.FileStorage) {
+func shutdown(srv *http.Server, closeStore func(context.Context) error) {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -31,8 +31,8 @@ func shutdown(srv *http.Server, store *storage.FileStorage) {
 	if err != nil {
 		zap.S().Errorw("failed to shutdown server", "error", err)
 	}
-	err = store.Save()
+	err = closeStore(shutdownCtx)
 	if err != nil {
-		zap.S().Fatalw("failed to save store", "error", err)
+		zap.S().Fatalw("failed to close store", "error", err)
 	}
 }

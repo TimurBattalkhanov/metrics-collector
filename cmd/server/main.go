@@ -21,21 +21,15 @@ func main() {
 	}
 	defer logger.Sync()
 
-	store, err := newStorage(ctx, cfg)
+	store, db, closeStore, err := newStorage(ctx, cfg)
 	if err != nil {
 		zap.S().Fatalw("failed to init storage", "error", err)
 	}
-
-	db, err := newDB(cfg)
-	if err != nil {
-		zap.S().Fatalw("failed to init database storage", "error", err)
-	}
-	defer db.Close()
 
 	srv := newServer(cfg, store, db, logger)
 	go runServer(srv)
 
 	<-ctx.Done()
 
-	shutdown(srv, store)
+	shutdown(srv, closeStore)
 }
