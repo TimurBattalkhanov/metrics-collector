@@ -32,7 +32,7 @@ func (fs *FileStorage) RunIntervalSave(ctx context.Context, interval time.Durati
 	for {
 		select {
 		case <-ticker.C:
-			if err := fs.Save(); err != nil {
+			if err := fs.Save(ctx); err != nil {
 				zap.S().Errorw("failed to save metrics", "error", err)
 			}
 		case <-ctx.Done():
@@ -41,9 +41,15 @@ func (fs *FileStorage) RunIntervalSave(ctx context.Context, interval time.Durati
 	}
 }
 
-func (fs *FileStorage) Save() error {
-	gauges := fs.store.GetGauges()
-	counters := fs.store.GetCounters()
+func (fs *FileStorage) Save(ctx context.Context) error {
+	gauges, err := fs.store.GetGauges(ctx)
+	if err != nil {
+		return err
+	}
+	counters, err := fs.store.GetCounters(ctx)
+	if err != nil {
+		return err
+	}
 	metrics := make([]models.Metrics, 0, len(gauges)+len(counters))
 	for k, v := range gauges {
 		metric := models.Metrics{
@@ -75,7 +81,7 @@ func (fs *FileStorage) Save() error {
 	return nil
 }
 
-func (fs *FileStorage) Load() error {
+func (fs *FileStorage) Load(ctx context.Context) error {
 	consumer, err := NewConsumer(fs.path)
 	if os.IsNotExist(err) {
 		return nil
@@ -93,11 +99,17 @@ func (fs *FileStorage) Load() error {
 
 	for _, v := range metrics {
 		if v.MType == models.Gauge && v.Value != nil {
-			fs.store.UpdateGauge(v.ID, *v.Value)
+			_, err = fs.store.UpdateGauge(ctx, v.ID, *v.Value)
+			if err != nil {
+				return err
+			}
 			continue
 		}
 		if v.MType == models.Counter && v.Delta != nil {
-			fs.store.UpdateCounter(v.ID, *v.Delta)
+			_, err = fs.store.UpdateCounter(ctx, v.ID, *v.Delta)
+			if err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -177,38 +189,44 @@ func (c *Consumer) Close() error {
 	return c.file.Close()
 }
 
-func (fs *FileStorage) UpdateGauge(id string, value float64) float64 {
-	v := fs.store.UpdateGauge(id, value)
+func (fs *FileStorage) UpdateGauge(ctx context.Context, id string, value float64) (float64, error) {
+	v, err := fs.store.UpdateGauge(ctx, id, value)
+	if err != nil {
+		return 0, err
+	}
 	if fs.syncSave {
-		if err := fs.Save(); err != nil {
-			zap.S().Errorf("failed to save metrics: %s", err.Error())
+		if err := fs.Save(ctx); err != nil {
+			return 0, err
 		}
 	}
-	return v
+	return v, nil
 }
 
-func (fs *FileStorage) UpdateCounter(id string, value int64) int64 {
-	v := fs.store.UpdateCounter(id, value)
+func (fs *FileStorage) UpdateCounter(ctx context.Context, id string, value int64) (int64, error) {
+	v, err := fs.store.UpdateCounter(ctx, id, value)
+	if err != nil {
+		return 0, err
+	}
 	if fs.syncSave {
-		if err := fs.Save(); err != nil {
-			zap.S().Errorf("failed to save metrics: %s", err.Error())
+		if err := fs.Save(ctx); err != nil {
+			return 0, err
 		}
 	}
-	return v
+	return v, nil
 }
 
-func (fs *FileStorage) GetGauges() map[string]float64 {
-	return fs.store.GetGauges()
+func (fs *FileStorage) GetGauges(ctx context.Context) (map[string]float64, error) {
+	return fs.store.GetGauges(ctx)
 }
 
-func (fs *FileStorage) GetCounters() map[string]int64 {
-	return fs.store.GetCounters()
+func (fs *FileStorage) GetCounters(ctx context.Context) (map[string]int64, error) {
+	return fs.store.GetCounters(ctx)
 }
 
-func (fs *FileStorage) GetGauge(name string) (float64, bool) {
-	return fs.store.GetGauge(name)
+func (fs *FileStorage) GetGauge(ctx context.Context, name string) (float64, bool, error) {
+	return fs.store.GetGauge(ctx, name)
 }
 
-func (fs *FileStorage) GetCounter(name string) (int64, bool) {
-	return fs.store.GetCounter(name)
+func (fs *FileStorage) GetCounter(ctx context.Context, name string) (int64, bool, error) {
+	return fs.store.GetCounter(ctx, name)
 }
