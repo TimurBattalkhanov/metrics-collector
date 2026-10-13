@@ -34,7 +34,7 @@ func main() {
 		elapsed += pollInterval
 
 		if elapsed >= reportInterval {
-			agent.SendAll(baseURL, gauges, pollCount)
+			agent.SendBatch(baseURL, gauges, pollCount)
 			elapsed = 0
 		}
 	}

@@ -215,6 +215,85 @@ func TestValuePostHandler(t *testing.T) {
 	}
 }
 
+func TestBatchUpdatePostHandler(t *testing.T) {
+	ctx := context.Background()
+	noGauges := map[string]float64{}
+	noCounters := map[string]int64{}
+	tests := []struct {
+		name         string
+		method       string
+		body         string
+		wantStatus   int
+		wantGauges   map[string]float64
+		wantCounters map[string]int64
+	}{
+		{
+			"Valid gauge and counter", http.MethodPost,
+			`[{"id":"Alloc","type":"gauge","value":12.5},{"id":"PollCount","type":"counter","delta":3}]`,
+			http.StatusOK, map[string]float64{"Alloc": 12.5}, map[string]int64{"PollCount": 3},
+		},
+		{
+			"Same counter twice gives sum of counters", http.MethodPost,
+			`[{"id":"PollCount","type":"counter","delta":2},{"id":"PollCount","type":"counter","delta":2}]`,
+			http.StatusOK, noGauges, map[string]int64{"PollCount": 4},
+		},
+		{
+			"Invalid Json", http.MethodPost, `[{`,
+			http.StatusBadRequest, noGauges, noCounters,
+		},
+		{
+			"Gauge without value", http.MethodPost, `[{"id":"Alloc","type":"gauge"}]`,
+			http.StatusBadRequest, noGauges, noCounters,
+		},
+		{
+			"Counter without delta", http.MethodPost, `[{"id":"PollCount","type":"counter"}]`,
+			http.StatusBadRequest, noGauges, noCounters,
+		},
+		{
+			"Unknown type", http.MethodPost, `[{"id":"x","type":"unknown","value":1}]`,
+			http.StatusBadRequest, noGauges, noCounters,
+		},
+		{
+			"Nothing saved when one metric is invalid", http.MethodPost,
+			`[{"id":"Alloc","type":"gauge","value":12.5},{"id":"PollCount","type":"counter"}]`,
+			http.StatusBadRequest, noGauges, noCounters,
+		},
+		{
+			"method GET not allowed", http.MethodGet, `[]`,
+			http.StatusMethodNotAllowed, noGauges, noCounters,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := repository.NewMemStorage()
+
+			reqBody := strings.NewReader(tt.body)
+			res := prepareServerAndRequest(store, tt.method, `/updates`, reqBody)
+			defer res.Body.Close()
+
+			if res.StatusCode != tt.wantStatus {
+				t.Errorf("получили %d, ожидали %d", res.StatusCode, tt.wantStatus)
+			}
+			if http.StatusOK == tt.wantStatus && res.Header.Get("Content-Type") != "application/json" {
+				t.Errorf("Ожидали Content-Type %q, а получили %q", "application/json", res.Header.Get("Content-Type"))
+			}
+
+			gauges, err := store.GetGauges(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assert.Equal(t, tt.wantGauges, gauges)
+
+			counters, err := store.GetCounters(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assert.Equal(t, tt.wantCounters, counters)
+		})
+	}
+}
+
 func prepareServerAndRequest(storage repository.Storage, method string, path string, body io.Reader) *http.Response {
 	req := httptest.NewRequest(method, path, body)
 	rec := httptest.NewRecorder()
