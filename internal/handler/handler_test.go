@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -42,6 +43,7 @@ func TestUpdateHandler(t *testing.T) {
 }
 
 func TestGetHandler(t *testing.T) {
+	ctx := context.Background()
 	tests := []struct {
 		name       string
 		method     string
@@ -60,8 +62,8 @@ func TestGetHandler(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			store := repository.NewMemStorage()
-			store.UpdateCounter("PollCount", 1)
-			store.UpdateGauge("Alloc", 100)
+			store.UpdateCounter(ctx, "PollCount", 1)
+			store.UpdateGauge(ctx, "Alloc", 100)
 
 			res := prepareServerAndRequest(store, tt.method, tt.path, nil)
 			defer res.Body.Close()
@@ -81,10 +83,10 @@ func TestGetHandler(t *testing.T) {
 }
 
 func TestDefaultHandler_ReturnTableWithMetrics(t *testing.T) {
-
+	ctx := context.Background()
 	store := repository.NewMemStorage()
-	store.UpdateCounter("PollCount", 1)
-	store.UpdateGauge("Alloc", 100)
+	store.UpdateCounter(ctx, "PollCount", 1)
+	store.UpdateGauge(ctx, "Alloc", 100)
 
 	wantBody := `<html><body><table border="1">
 <tr><th>Тип</th><th>Имя</th><th>Значение</th></tr>
@@ -110,6 +112,7 @@ func TestDefaultHandler_ReturnTableWithMetrics(t *testing.T) {
 }
 
 func TestUpdatePostHandler(t *testing.T) {
+	ctx := context.Background()
 	tests := []struct {
 		name       string
 		method     string
@@ -142,13 +145,21 @@ func TestUpdatePostHandler(t *testing.T) {
 					t.Errorf("Ожидали Content-Type %q, а получили %q", "application/json", res.Header.Get("Content-Type"))
 				}
 				if strings.Contains(tt.body, `"type":"counter"`) {
-					if len(store.GetCounters()) == 0 {
-						t.Errorf("Ожидалась 1 запись counter, а получили %d", len(store.GetCounters()))
+					counters, err := store.GetCounters(ctx)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if len(counters) == 0 {
+						t.Errorf("Ожидалась 1 запись counter, а получили %d", 0)
 					}
 				}
 				if strings.Contains(tt.body, `"type":"gauge"`) {
-					if len(store.GetGauges()) == 0 {
-						t.Errorf("Ожидалась 1 запись gauge, а получили %d", len(store.GetGauges()))
+					gauges, err := store.GetGauges(ctx)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if len(gauges) == 0 {
+						t.Errorf("Ожидалась 1 запись gauge, а получили %d", 0)
 					}
 				}
 			}
@@ -157,6 +168,7 @@ func TestUpdatePostHandler(t *testing.T) {
 }
 
 func TestValuePostHandler(t *testing.T) {
+	ctx := context.Background()
 	tests := []struct {
 		name       string
 		method     string
@@ -177,8 +189,8 @@ func TestValuePostHandler(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			store := repository.NewMemStorage()
-			store.UpdateCounter("PollCount", 5)
-			store.UpdateGauge("Alloc", 12.5)
+			store.UpdateCounter(ctx, "PollCount", 5)
+			store.UpdateGauge(ctx, "Alloc", 12.5)
 
 			reqBody := strings.NewReader(tt.body)
 			res := prepareServerAndRequest(store, tt.method, `/value`, reqBody)
@@ -209,7 +221,7 @@ func prepareServerAndRequest(storage repository.Storage, method string, path str
 
 	logger := zap.NewNop().Sugar()
 
-	NewRouter(storage, logger).ServeHTTP(rec, req)
+	NewRouter(storage, nil, logger).ServeHTTP(rec, req)
 
 	return rec.Result()
 }

@@ -67,6 +67,21 @@ func send(baseURL string, req models.Metrics) error {
 	return nil
 }
 
+func sendBatch(baseURL string, metrics []models.Metrics) error {
+	resp, err := client.R().
+		SetHeader("Content-Type", "application/json").
+		SetBody(metrics).
+		Post(baseURL + "/updates")
+
+	if err != nil {
+		return err
+	}
+	if resp.IsError() {
+		return fmt.Errorf("сервер ответил %d", resp.StatusCode())
+	}
+	return nil
+}
+
 func SendAll(baseURL string, gauges map[string]float64, pollCount int64) {
 	for name, v := range gauges {
 		req := models.Metrics{
@@ -86,5 +101,30 @@ func SendAll(baseURL string, gauges map[string]float64, pollCount int64) {
 	}
 	if err := send(baseURL, req); err != nil {
 		zap.L().Error("ошибка отправки", zap.Error(err))
+	}
+}
+
+func SendBatch(baseURL string, gauges map[string]float64, pollCount int64) {
+	var metrics []models.Metrics
+	for name, v := range gauges {
+		metric := models.Metrics{
+			ID:    name,
+			MType: models.Gauge,
+			Value: &v,
+		}
+		metrics = append(metrics, metric)
+	}
+	metrics = append(metrics, models.Metrics{
+		ID:    "PollCount",
+		MType: models.Counter,
+		Delta: &pollCount,
+	})
+
+	if len(metrics) == 0 {
+		return
+	}
+
+	if err := sendBatch(baseURL, metrics); err != nil {
+		zap.L().Error("Ошибка отправки батча", zap.Error(err))
 	}
 }
