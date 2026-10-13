@@ -230,3 +230,15 @@ func (fs *FileStorage) GetGauge(ctx context.Context, name string) (float64, bool
 func (fs *FileStorage) GetCounter(ctx context.Context, name string) (int64, bool, error) {
 	return fs.store.GetCounter(ctx, name)
 }
+
+func (fs *FileStorage) UpdateBatch(ctx context.Context, metrics []models.Metrics) error {
+	if err := fs.store.UpdateBatch(ctx, metrics); err != nil {
+		return err
+	}
+	if fs.syncSave {
+		if err := fs.Save(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
+}

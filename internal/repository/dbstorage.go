@@ -103,3 +103,30 @@ func (dbs *DBStorage) GetCounter(ctx context.Context, name string) (int64, bool,
 	}
 	return delta, true, nil
 }
+
+func (dbs *DBStorage) UpdateBatch(ctx context.Context, metrics []models.Metrics) error {
+	tx, err := dbs.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, metric := range metrics {
+		switch metric.MType {
+		case models.Gauge:
+			_, err := tx.ExecContext(ctx, "INSERT INTO metrics (id, value, mtype) VALUES ($1, $2, $3) ON CONFLICT(id, mtype) DO "+
+				"UPDATE SET value = $2", metric.ID, metric.Value, models.Gauge)
+			if err != nil {
+				return err
+			}
+		case models.Counter:
+			_, err := tx.ExecContext(ctx, "INSERT INTO metrics (id, delta, mtype) VALUES ($1, $2, $3) ON CONFLICT(id, mtype) DO "+
+				"UPDATE SET delta = metrics.delta + $2", metric.ID, metric.Delta, models.Counter)
+			if err != nil {
+				return err
+			}
+		default:
+			return errors.New("unknown metrics type")
+		}
+	}
+	return tx.Commit()
+}
