@@ -77,7 +77,7 @@ func (m *MemStorage) UpdateBatch(ctx context.Context, metrics []models.Metrics) 
 		case models.Counter:
 			m.counters[metric.ID] += *metric.Delta
 		default:
-			return fmt.Errorf("unknown metric type: %s", metric.MType)
+			return fmt.Errorf("%w: %s", ErrUnknownMetricType, metric.MType)
 		}
 	}
 	return nil

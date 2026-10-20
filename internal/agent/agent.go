@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"errors"
 	"fmt"
 	"math/rand"
 	"runtime"
@@ -14,6 +15,9 @@ import (
 var client = resty.New().
 	SetTimeout(time.Second).
 	OnBeforeRequest(gzipCompressBody)
+
+var retryDelays = []time.Duration{time.Second, 3 * time.Second, 5 * time.Second}
+var errBadStatus = errors.New("сервис ответил с кодом ошибки")
 
 func Collect() map[string]float64 {
 	var ms runtime.MemStats
@@ -62,7 +66,7 @@ func send(baseURL string, req models.Metrics) error {
 	}
 
 	if resp.IsError() {
-		return fmt.Errorf("сервер ответил %d", resp.StatusCode())
+		return fmt.Errorf("%w: %d", errBadStatus, resp.StatusCode())
 	}
 	return nil
 }
@@ -77,9 +81,21 @@ func sendBatch(baseURL string, metrics []models.Metrics) error {
 		return err
 	}
 	if resp.IsError() {
-		return fmt.Errorf("сервер ответил %d", resp.StatusCode())
+		return fmt.Errorf("%w: %d", errBadStatus, resp.StatusCode())
 	}
 	return nil
+}
+
+func sendBatchWithRetry(baseURL string, metrics []models.Metrics) error {
+	err := sendBatch(baseURL, metrics)
+	for _, delay := range retryDelays {
+		if err == nil || errors.Is(err, errBadStatus) {
+			return err
+		}
+		time.Sleep(delay)
+		err = sendBatch(baseURL, metrics)
+	}
+	return err
 }
 
 func SendAll(baseURL string, gauges map[string]float64, pollCount int64) {
@@ -124,7 +140,8 @@ func SendBatch(baseURL string, gauges map[string]float64, pollCount int64) {
 		return
 	}
 
-	if err := sendBatch(baseURL, metrics); err != nil {
-		zap.L().Error("Ошибка отправки батча", zap.Error(err))
+	err := sendBatchWithRetry(baseURL, metrics)
+	if err != nil {
+		zap.L().Error("ошибка отправки", zap.Error(err))
 	}
 }

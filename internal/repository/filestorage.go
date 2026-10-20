@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"time"
 
@@ -83,7 +84,7 @@ func (fs *FileStorage) Save(ctx context.Context) error {
 
 func (fs *FileStorage) Load(ctx context.Context) error {
 	consumer, err := NewConsumer(fs.path)
-	if os.IsNotExist(err) {
+	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
 	if err != nil {

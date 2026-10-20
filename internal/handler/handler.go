@@ -3,6 +3,7 @@ package handler
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -272,6 +273,10 @@ func BatchUpdatePostHandler(s repository.Storage) http.HandlerFunc {
 		}
 
 		if err := s.UpdateBatch(r.Context(), metrics); err != nil {
+			if errors.Is(err, repository.ErrUnknownMetricType) {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
