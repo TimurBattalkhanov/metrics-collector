@@ -209,7 +209,7 @@ func prepareServerAndRequest(storage repository.Storage, method string, path str
 
 	logger := zap.NewNop().Sugar()
 
-	NewRouter(storage, logger).ServeHTTP(rec, req)
+	NewRouter(storage, nil, logger).ServeHTTP(rec, req)
 
 	return rec.Result()
 }
