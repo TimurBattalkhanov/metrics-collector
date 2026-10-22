@@ -2,9 +2,12 @@ package repository
 
 import (
 	"context"
+	"errors"
 
 	models "github.com/TimurBattalkhanov/metrics-collector/internal/model"
 )
+
+var ErrUnknownMetricType = errors.New("unknown metric type")
 
 type Storage interface {
 	UpdateGauge(ctx context.Context, name string, value float64) (float64, error)

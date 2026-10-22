@@ -1,7 +1,11 @@
 package main
 
 import (
+	"context"
+	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/TimurBattalkhanov/metrics-collector/internal/agent"
@@ -10,6 +14,9 @@ import (
 
 func main() {
 	cfg := NewAgentConfig()
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	logger, err := zap.NewDevelopment()
 	if err != nil {
@@ -30,11 +37,17 @@ func main() {
 		gauges = agent.Collect()
 		pollCount++
 
-		time.Sleep(pollInterval)
+		timer := time.NewTimer(pollInterval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
 		elapsed += pollInterval
 
 		if elapsed >= reportInterval {
-			agent.SendBatch(baseURL, gauges, pollCount)
+			agent.SendBatch(ctx, baseURL, gauges, pollCount)
 			elapsed = 0
 		}
 	}

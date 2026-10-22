@@ -2,6 +2,7 @@ package agent
 
 import (
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -20,32 +21,26 @@ func TestCollect(t *testing.T) {
 	}
 }
 
-func TestSendAll(t *testing.T) {
-	var paths []string
-	var expectedPath = "/update"
-
+func TestSendBatch(t *testing.T) {
+	var expected = "/updates"
+	var path []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		paths = append(paths, r.URL.Path)
+		path = append(path, r.URL.Path)
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
 
-	SendAll(srv.URL, map[string]float64{"Alloc": 12.5}, 3)
-
-	if len(paths) != 2 {
-		t.Fatalf("requests: expected %d but actual is %d", 2, len(paths))
+	SendBatch(context.Background(), srv.URL, map[string]float64{"Alloc": 12.5}, 3)
+	if len(path) != 1 {
+		t.Fatalf("expected 1 paths, got %d", len(path))
 	}
-
-	if paths[0] != expectedPath {
-		t.Errorf("path: expected %v but actual is %v", expectedPath, paths[0])
-	}
-	if paths[1] != expectedPath {
-		t.Errorf("path: expected %v but actual is %v", expectedPath, paths[1])
+	if path[0] != expected {
+		t.Fatalf("expected %s, got %s", expected, path[0])
 	}
 }
 
-func TestSendAllGzip(t *testing.T) {
-	var received []models.Metrics
+func TestSendBatchGzip(t *testing.T) {
+	var received [][]models.Metrics
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Content-Encoding") != "gzip" {
@@ -60,26 +55,46 @@ func TestSendAllGzip(t *testing.T) {
 		}
 		defer gzr.Close()
 
-		var m models.Metrics
-		if err := json.NewDecoder(gzr).Decode(&m); err != nil {
+		var batch []models.Metrics
+		if err := json.NewDecoder(gzr).Decode(&batch); err != nil {
 			t.Errorf("decode body: %v", err)
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		received = append(received, m)
+		received = append(received, batch)
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
 
-	SendAll(srv.URL, map[string]float64{"Alloc": 12.5}, 3)
-	SendAll(srv.URL, map[string]float64{"Alloc": 13.5}, 4)
+	SendBatch(context.Background(), srv.URL, map[string]float64{"Alloc": 12.5}, 3)
+	SendBatch(context.Background(), srv.URL, map[string]float64{"Alloc": 13.5}, 4)
 
-	if len(received) != 4 {
-		t.Fatalf("requests: expected %d but actual is %d", 4, len(received))
+	if len(received) != 2 {
+		t.Fatalf("requests: expected %d but actual is %d", 2, len(received))
 	}
 
-	last := received[len(received)-1]
-	if last.ID != "PollCount" || last.Delta == nil || *last.Delta != 4 {
-		t.Errorf("last metric: expected PollCount=4 but actual is %+v", last)
+	expected := []struct {
+		alloc     float64
+		pollCount int64
+	}{
+		{alloc: 12.5, pollCount: 3},
+		{alloc: 13.5, pollCount: 4},
+	}
+
+	for i, batch := range received {
+		byID := make(map[string]models.Metrics, len(batch))
+		for _, m := range batch {
+			byID[m.ID] = m
+		}
+
+		alloc, ok := byID["Alloc"]
+		if !ok || alloc.MType != models.Gauge || alloc.Value == nil || *alloc.Value != expected[i].alloc {
+			t.Errorf("batch %d: Alloc expected %v but actual is %+v", i, expected[i].alloc, alloc)
+		}
+
+		pc, ok := byID["PollCount"]
+		if !ok || pc.MType != models.Counter || pc.Delta == nil || *pc.Delta != expected[i].pollCount {
+			t.Errorf("batch %d: PollCount expected %d but actual is %+v", i, expected[i].pollCount, pc)
+		}
 	}
 }

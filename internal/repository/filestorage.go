@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"time"
 
@@ -68,13 +69,13 @@ func (fs *FileStorage) Save(ctx context.Context) error {
 		metrics = append(metrics, metric)
 	}
 
-	producer, err := NewProducer(fs.path)
+	p, err := newProducer(fs.path)
 	if err != nil {
 		return err
 	}
-	defer producer.Close()
+	defer p.close()
 
-	err = producer.WriteMetrics(metrics)
+	err = p.writeMetrics(metrics)
 	if err != nil {
 		return err
 	}
@@ -82,17 +83,17 @@ func (fs *FileStorage) Save(ctx context.Context) error {
 }
 
 func (fs *FileStorage) Load(ctx context.Context) error {
-	consumer, err := NewConsumer(fs.path)
-	if os.IsNotExist(err) {
+	c, err := newConsumer(fs.path)
+	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
 
-	defer consumer.Close()
+	defer c.close()
 
-	metrics, err := consumer.ReadMetrics()
+	metrics, err := c.readMetrics()
 	if err != nil {
 		return err
 	}
@@ -115,62 +116,62 @@ func (fs *FileStorage) Load(ctx context.Context) error {
 	return nil
 }
 
-type Producer struct {
+type producer struct {
 	file   *os.File
 	writer *bufio.Writer
 }
 
-func NewProducer(filename string) (*Producer, error) {
+func newProducer(filename string) (*producer, error) {
 	file, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0666)
 	if err != nil {
 		return nil, err
 	}
 
-	return &Producer{
+	return &producer{
 		file:   file,
 		writer: bufio.NewWriter(file),
 	}, nil
 }
 
-func (p *Producer) WriteMetrics(metrics []models.Metrics) error {
+func (p *producer) writeMetrics(metrics []models.Metrics) error {
 	data, err := json.Marshal(metrics)
 	if err != nil {
 		return err
 	}
 
-	if _, err := p.writer.Write(data); err != nil {
+	if _, err = p.writer.Write(data); err != nil {
 		return err
 	}
 
-	if err := p.writer.WriteByte('\n'); err != nil {
+	if err = p.writer.WriteByte('\n'); err != nil {
 		return err
 	}
 
 	return p.writer.Flush()
 }
 
-func (p *Producer) Close() error {
+func (p *producer) close() error {
 	return p.file.Close()
 }
 
-type Consumer struct {
+type consumer struct {
 	file    *os.File
 	scanner *bufio.Scanner
 }
 
-func NewConsumer(filename string) (*Consumer, error) {
+func newConsumer(filename string) (*consumer, error) {
 	file, err := os.OpenFile(filename, os.O_RDONLY, 0666)
 	if err != nil {
 		return nil, err
 	}
 
-	return &Consumer{
+	return &consumer{
 		file:    file,
 		scanner: bufio.NewScanner(file),
 	}, nil
 }
 
-func (c *Consumer) ReadMetrics() ([]models.Metrics, error) {
+func (c *consumer) readMetrics() ([]models.Metrics, error) {
 	if !c.scanner.Scan() {
 		return nil, c.scanner.Err()
 	}
@@ -185,7 +186,7 @@ func (c *Consumer) ReadMetrics() ([]models.Metrics, error) {
 	return metrics, nil
 }
 
-func (c *Consumer) Close() error {
+func (c *consumer) close() error {
 	return c.file.Close()
 }
 

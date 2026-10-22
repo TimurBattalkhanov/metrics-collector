@@ -3,6 +3,7 @@ package handler
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -272,6 +273,11 @@ func BatchUpdatePostHandler(s repository.Storage) http.HandlerFunc {
 		}
 
 		if err := s.UpdateBatch(r.Context(), metrics); err != nil {
+			if errors.Is(err, repository.ErrUnknownMetricType) {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			zap.L().Error("error updating batch", zap.Error(err))
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
@@ -285,7 +291,7 @@ func BatchUpdatePostHandler(s repository.Storage) http.HandlerFunc {
 func PingHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if db == nil {
-			w.WriteHeader(http.StatusInternalServerError)
+			w.WriteHeader(http.StatusOK)
 			return
 		}
 		err := db.PingContext(r.Context())
