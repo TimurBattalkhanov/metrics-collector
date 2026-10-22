@@ -27,6 +27,7 @@ func NewRouter(s repository.Storage, db *sql.DB, logger *zap.SugaredLogger) http
 	r.Post("/update/{type}/{name}/{value}", UpdateHandler(s))
 	r.Post("/update", UpdatePostHandler(s))
 	r.Post("/value", ValuePostHandler(s))
+	r.Post("/updates", BatchUpdatePostHandler(s))
 	return r
 }
 
@@ -240,6 +241,43 @@ func ValuePostHandler(s repository.Storage) http.HandlerFunc {
 			zap.L().Error("error encoding response", zap.Error(err))
 			return
 		}
+		zap.L().Info("sending HTTP 200 response")
+	}
+}
+
+func BatchUpdatePostHandler(s repository.Storage) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var metrics []models.Metrics
+		dec := json.NewDecoder(r.Body)
+		if err := dec.Decode(&metrics); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		for _, m := range metrics {
+			switch m.MType {
+			case models.Gauge:
+				if m.Value == nil {
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+			case models.Counter:
+				if m.Delta == nil {
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+			default:
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+		}
+
+		if err := s.UpdateBatch(r.Context(), metrics); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
 		zap.L().Info("sending HTTP 200 response")
 	}
 }

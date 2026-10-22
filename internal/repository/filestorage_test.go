@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+
+	models "github.com/TimurBattalkhanov/metrics-collector/internal/model"
 )
 
 func TestFileStorageSaveAndLoad(t *testing.T) {
@@ -170,6 +172,62 @@ func TestFileStorageSyncSave(t *testing.T) {
 
 			store := NewFileStorage(NewMemStorage(), path, tt.syncSave)
 			tt.update(store)
+
+			data, err := os.ReadFile(path)
+			if tt.wantFile == "" {
+				if !os.IsNotExist(err) {
+					t.Errorf("файл не должен был создаться, ошибка: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(data) != tt.wantFile {
+				t.Errorf("файл: получили %q, ожидали %q", data, tt.wantFile)
+			}
+		})
+	}
+}
+
+func TestFileStorageUpdateBatch(t *testing.T) {
+	metrics := []models.Metrics{
+		{ID: "Alloc", MType: models.Gauge, Value: new(12.5)},
+		{ID: "PollCount", MType: models.Counter, Delta: new(int64(3))},
+	}
+	ctx := context.Background()
+	tests := []struct {
+		name     string
+		syncSave bool
+		wantFile string
+	}{
+		{
+			"Update batch when sync true",
+			true,
+			`[{"id":"Alloc","type":"gauge","value":12.5},{"id":"PollCount","type":"counter","delta":3}]` + "\n",
+		},
+		{
+			"Update batch when sync false",
+			false,
+			"",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "metrics.json")
+
+			store := NewFileStorage(NewMemStorage(), path, tt.syncSave)
+			if err := store.UpdateBatch(ctx, metrics); err != nil {
+				t.Fatal(err)
+			}
+
+			if v, ok, _ := store.GetGauge(ctx, "Alloc"); !ok || v != 12.5 {
+				t.Errorf("invalid gauge value: %v", v)
+			}
+			if v, ok, _ := store.GetCounter(ctx, "PollCount"); !ok || v != 3 {
+				t.Errorf("invalid counter value: %v", v)
+			}
 
 			data, err := os.ReadFile(path)
 			if tt.wantFile == "" {
