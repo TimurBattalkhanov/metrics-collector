@@ -6,7 +6,6 @@ import (
 	"time"
 
 	storage "github.com/TimurBattalkhanov/metrics-collector/internal/repository"
-	"github.com/TimurBattalkhanov/metrics-collector/migrations"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
@@ -16,15 +15,17 @@ func newStorage(ctx context.Context, cfg ServerConfig) (storage.Storage, *sql.DB
 		if err != nil {
 			return nil, nil, nil, err
 		}
-		err = migrations.Apply(db)
+
+		store, err := storage.NewDBStorage(db)
 		if err != nil {
 			db.Close()
 			return nil, nil, nil, err
 		}
+
 		closeDB := func(context.Context) error {
 			return db.Close()
 		}
-		return storage.NewDBStorage(db), db, closeDB, nil
+		return store, db, closeDB, nil
 	}
 
 	if cfg.FileStoragePath != "" {

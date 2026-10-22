@@ -13,23 +13,25 @@ func TestClassify(t *testing.T) {
 	tests := []struct {
 		name string
 		err  error
-		want PGErrorClassification
+		want pgErrorClassification
 	}{
-		{"nil", nil, NonRetriable},
-		{"connection exception", &pgconn.PgError{Code: pgerrcode.ConnectionException}, Retriable},
-		{"connection failure", &pgconn.PgError{Code: pgerrcode.ConnectionFailure}, Retriable},
-		{"connection does not exist", &pgconn.PgError{Code: pgerrcode.ConnectionDoesNotExist}, Retriable},
-		{"unable to establish connection", &pgconn.PgError{Code: pgerrcode.SQLClientUnableToEstablishSQLConnection}, Retriable},
-		{"wrapped connection failure", fmt.Errorf("query: %w", &pgconn.PgError{Code: pgerrcode.ConnectionFailure}), Retriable},
-		{"unique violation", &pgconn.PgError{Code: pgerrcode.UniqueViolation}, NonRetriable},
-		{"syntax error", &pgconn.PgError{Code: pgerrcode.SyntaxError}, NonRetriable},
-		{"unknown metric type", ErrUnknownMetricType, NonRetriable},
-		{"plain error", errors.New("boom"), NonRetriable},
+		{"nil", nil, nonRetriable},
+		{"connection exception", &pgconn.PgError{Code: pgerrcode.ConnectionException}, retriable},
+		{"connection failure", &pgconn.PgError{Code: pgerrcode.ConnectionFailure}, retriable},
+		{"connection does not exist", &pgconn.PgError{Code: pgerrcode.ConnectionDoesNotExist}, retriable},
+		{"unable to establish connection", &pgconn.PgError{Code: pgerrcode.SQLClientUnableToEstablishSQLConnection}, retriable},
+		{"wrapped connection failure", fmt.Errorf("query: %w", &pgconn.PgError{Code: pgerrcode.ConnectionFailure}), retriable},
+		{"wrapped serialization failure", fmt.Errorf("query: %w", &pgconn.PgError{Code: pgerrcode.SerializationFailure}), retriable},
+		{"wrapped deadlock failure", fmt.Errorf("query: %w", &pgconn.PgError{Code: pgerrcode.DeadlockDetected}), retriable},
+		{"unique violation", &pgconn.PgError{Code: pgerrcode.UniqueViolation}, nonRetriable},
+		{"syntax error", &pgconn.PgError{Code: pgerrcode.SyntaxError}, nonRetriable},
+		{"unknown metric type", ErrUnknownMetricType, nonRetriable},
+		{"plain error", errors.New("boom"), nonRetriable},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := Classify(tt.err); got != tt.want {
+			if got := classify(tt.err); got != tt.want {
 				t.Errorf("Classify(%v) = %v, want %v", tt.err, got, tt.want)
 			}
 		})

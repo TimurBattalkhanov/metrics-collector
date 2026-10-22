@@ -42,3 +42,25 @@ func TestWithRetryNonRetriableError(t *testing.T) {
 		t.Errorf("calls = %d, want 1", calls)
 	}
 }
+
+func TestWithRetrySuccessOnLastAttempt(t *testing.T) {
+	old := retryDelays
+	retryDelays = []time.Duration{time.Millisecond, time.Millisecond, time.Millisecond}
+	defer func() { retryDelays = old }()
+
+	calls := 0
+	err := withRetry(context.Background(), func() error {
+		calls++
+		if calls < 4 {
+			return &pgconn.PgError{Code: pgerrcode.ConnectionFailure}
+		}
+		return nil
+	})
+
+	if err != nil {
+		t.Fatalf("expected nil, got %v", err)
+	}
+	if calls != 4 {
+		t.Errorf("calls = %d, want 4", calls)
+	}
+}

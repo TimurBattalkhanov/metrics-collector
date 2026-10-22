@@ -7,26 +7,28 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-type PGErrorClassification int
+type pgErrorClassification int
 
 const (
-	NonRetriable PGErrorClassification = iota
-	Retriable
+	nonRetriable pgErrorClassification = iota
+	retriable
 )
 
-func Classify(err error) PGErrorClassification {
+func classify(err error) pgErrorClassification {
 	if err == nil {
-		return NonRetriable
+		return nonRetriable
 	}
 	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok {
-		return ClassifyPgError(pgErr)
+		return classifyPgError(pgErr)
 	}
-	return NonRetriable
+	return nonRetriable
 }
 
-func ClassifyPgError(pgErr *pgconn.PgError) PGErrorClassification {
-	if pgerrcode.IsConnectionException(pgErr.Code) {
-		return Retriable
+func classifyPgError(pgErr *pgconn.PgError) pgErrorClassification {
+	if pgerrcode.IsConnectionException(pgErr.Code) ||
+		pgErr.Code == pgerrcode.SerializationFailure ||
+		pgErr.Code == pgerrcode.DeadlockDetected {
+		return retriable
 	}
-	return NonRetriable
+	return nonRetriable
 }

@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"math/rand"
@@ -14,6 +15,9 @@ import (
 
 var client = resty.New().
 	SetTimeout(time.Second).
+	SetRetryCount(len(retryDelays)).
+	SetRetryMaxWaitTime(getMaxWaitRetry()).
+	SetRetryAfter(retryAfter).
 	OnBeforeRequest(gzipCompressBody)
 
 var retryDelays = []time.Duration{time.Second, 3 * time.Second, 5 * time.Second}
@@ -55,24 +59,17 @@ func Collect() map[string]float64 {
 	}
 }
 
-func send(baseURL string, req models.Metrics) error {
-	resp, err := client.R().
-		SetHeader("Content-Type", "application/json").
-		SetBody(req).
-		Post(baseURL + "/update")
-
-	if err != nil {
-		return err
-	}
-
-	if resp.IsError() {
-		return fmt.Errorf("%w: %d", errBadStatus, resp.StatusCode())
-	}
-	return nil
+func retryAfter(_ *resty.Client, resp *resty.Response) (time.Duration, error) {
+	return retryDelays[resp.Request.Attempt-1], nil
 }
 
-func sendBatch(baseURL string, metrics []models.Metrics) error {
+func getMaxWaitRetry() time.Duration {
+	return retryDelays[len(retryDelays)-1]
+}
+
+func sendBatch(ctx context.Context, baseURL string, metrics []models.Metrics) error {
 	resp, err := client.R().
+		SetContext(ctx).
 		SetHeader("Content-Type", "application/json").
 		SetBody(metrics).
 		Post(baseURL + "/updates")
@@ -86,41 +83,7 @@ func sendBatch(baseURL string, metrics []models.Metrics) error {
 	return nil
 }
 
-func sendBatchWithRetry(baseURL string, metrics []models.Metrics) error {
-	err := sendBatch(baseURL, metrics)
-	for _, delay := range retryDelays {
-		if err == nil || errors.Is(err, errBadStatus) {
-			return err
-		}
-		time.Sleep(delay)
-		err = sendBatch(baseURL, metrics)
-	}
-	return err
-}
-
-func SendAll(baseURL string, gauges map[string]float64, pollCount int64) {
-	for name, v := range gauges {
-		req := models.Metrics{
-			ID:    name,
-			MType: models.Gauge,
-			Value: &v,
-		}
-		if err := send(baseURL, req); err != nil {
-			zap.L().Error("ошибка отправки", zap.Error(err))
-		}
-	}
-
-	req := models.Metrics{
-		ID:    "PollCount",
-		MType: models.Counter,
-		Delta: &pollCount,
-	}
-	if err := send(baseURL, req); err != nil {
-		zap.L().Error("ошибка отправки", zap.Error(err))
-	}
-}
-
-func SendBatch(baseURL string, gauges map[string]float64, pollCount int64) {
+func SendBatch(ctx context.Context, baseURL string, gauges map[string]float64, pollCount int64) {
 	var metrics []models.Metrics
 	for name, v := range gauges {
 		metric := models.Metrics{
@@ -140,7 +103,7 @@ func SendBatch(baseURL string, gauges map[string]float64, pollCount int64) {
 		return
 	}
 
-	err := sendBatchWithRetry(baseURL, metrics)
+	err := sendBatch(ctx, baseURL, metrics)
 	if err != nil {
 		zap.L().Error("ошибка отправки", zap.Error(err))
 	}

@@ -9,7 +9,7 @@ import (
 )
 
 func gzipCompressBody(_ *resty.Client, r *resty.Request) error {
-	if r.Body == nil {
+	if r.Body == nil || r.Header.Get("Content-Encoding") == "gzip" {
 		return nil
 	}
 	data, ok := r.Body.([]byte)

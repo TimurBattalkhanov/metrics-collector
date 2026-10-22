@@ -8,6 +8,9 @@ import (
 	"time"
 
 	models "github.com/TimurBattalkhanov/metrics-collector/internal/model"
+	"github.com/TimurBattalkhanov/metrics-collector/migrations"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
 )
 
 var retryDelays = []time.Duration{time.Second, 3 * time.Second, 5 * time.Second}
@@ -16,10 +19,14 @@ type DBStorage struct {
 	db *sql.DB
 }
 
-func NewDBStorage(db *sql.DB) *DBStorage {
+func NewDBStorage(db *sql.DB) (*DBStorage, error) {
+	err := migrations.Apply(db)
+	if err != nil {
+		return nil, err
+	}
 	return &DBStorage{
 		db: db,
-	}
+	}, nil
 }
 
 func (dbs *DBStorage) UpdateGauge(ctx context.Context, id string, value float64) (float64, error) {
@@ -157,37 +164,39 @@ func (dbs *DBStorage) GetCounter(ctx context.Context, name string) (int64, bool,
 
 func (dbs *DBStorage) UpdateBatch(ctx context.Context, metrics []models.Metrics) error {
 	return withRetry(ctx, func() error {
-		tx, err := dbs.db.BeginTx(ctx, nil)
-		if err != nil {
-			return err
-		}
-		defer tx.Rollback()
+		batch := &pgx.Batch{}
 		for _, metric := range metrics {
 			switch metric.MType {
 			case models.Gauge:
-				_, err := tx.ExecContext(ctx, "INSERT INTO metrics (id, value, mtype) VALUES ($1, $2, $3) ON CONFLICT(id, mtype) DO "+
+				batch.Queue("INSERT INTO metrics (id, value, mtype) VALUES ($1, $2, $3) ON CONFLICT(id, mtype) DO "+
 					"UPDATE SET value = $2", metric.ID, metric.Value, models.Gauge)
-				if err != nil {
-					return err
-				}
 			case models.Counter:
-				_, err := tx.ExecContext(ctx, "INSERT INTO metrics (id, delta, mtype) VALUES ($1, $2, $3) ON CONFLICT(id, mtype) DO "+
+				batch.Queue("INSERT INTO metrics (id, delta, mtype) VALUES ($1, $2, $3) ON CONFLICT(id, mtype) DO "+
 					"UPDATE SET delta = metrics.delta + $2", metric.ID, metric.Delta, models.Counter)
-				if err != nil {
-					return err
-				}
 			default:
 				return fmt.Errorf("%w: %s", ErrUnknownMetricType, metric.MType)
 			}
 		}
-		return tx.Commit()
+		connection, err := dbs.db.Conn(ctx)
+		if err != nil {
+			return err
+		}
+		defer connection.Close()
+
+		return connection.Raw(func(driverConn any) error {
+			stdConn, ok := driverConn.(*stdlib.Conn)
+			if !ok {
+				return fmt.Errorf("unexpected driver connection type: %T", driverConn)
+			}
+			return stdConn.Conn().SendBatch(ctx, batch).Close()
+		})
 	})
 }
 
 func withRetry(ctx context.Context, fn func() error) error {
 	err := fn()
 	for _, delay := range retryDelays {
-		if err == nil || Classify(err) == NonRetriable {
+		if err == nil || classify(err) == nonRetriable {
 			return err
 		}
 		select {
@@ -196,6 +205,9 @@ func withRetry(ctx context.Context, fn func() error) error {
 			return ctx.Err()
 		}
 		err = fn()
+	}
+	if err == nil {
+		return nil
 	}
 	return fmt.Errorf("операция прервана после %d попыток: %w", len(retryDelays)+1, err)
 }
