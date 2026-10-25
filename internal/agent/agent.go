@@ -6,21 +6,24 @@ import (
 	"fmt"
 	"math/rand"
 	"runtime"
-	"time"
 
 	models "github.com/TimurBattalkhanov/metrics-collector/internal/model"
 	"github.com/go-resty/resty/v2"
 	"go.uber.org/zap"
 )
 
-var client = resty.New().
-	SetTimeout(time.Second).
-	SetRetryCount(len(retryDelays)).
-	SetRetryMaxWaitTime(getMaxWaitRetry()).
-	SetRetryAfter(retryAfter).
-	OnBeforeRequest(gzipCompressBody)
+type Agent struct {
+	client  *resty.Client
+	baseURL string
+}
 
-var retryDelays = []time.Duration{time.Second, 3 * time.Second, 5 * time.Second}
+func NewAgent(client *resty.Client, baseURL string) *Agent {
+	return &Agent{
+		client:  client,
+		baseURL: baseURL,
+	}
+}
+
 var errBadStatus = errors.New("сервис ответил с кодом ошибки")
 
 func Collect() map[string]float64 {
@@ -59,20 +62,13 @@ func Collect() map[string]float64 {
 	}
 }
 
-func retryAfter(_ *resty.Client, resp *resty.Response) (time.Duration, error) {
-	return retryDelays[resp.Request.Attempt-1], nil
-}
-
-func getMaxWaitRetry() time.Duration {
-	return retryDelays[len(retryDelays)-1]
-}
-
-func sendBatch(ctx context.Context, baseURL string, metrics []models.Metrics) error {
-	resp, err := client.R().
+func (a *Agent) sendBatch(ctx context.Context, metrics []models.Metrics) error {
+	resp, err := a.client.
+		R().
 		SetContext(ctx).
 		SetHeader("Content-Type", "application/json").
 		SetBody(metrics).
-		Post(baseURL + "/updates")
+		Post(a.baseURL + "/updates")
 
 	if err != nil {
 		return err
@@ -83,7 +79,7 @@ func sendBatch(ctx context.Context, baseURL string, metrics []models.Metrics) er
 	return nil
 }
 
-func SendBatch(ctx context.Context, baseURL string, gauges map[string]float64, pollCount int64) {
+func (a *Agent) SendBatch(ctx context.Context, gauges map[string]float64, pollCount int64) {
 	var metrics []models.Metrics
 	for name, v := range gauges {
 		metric := models.Metrics{
@@ -103,7 +99,7 @@ func SendBatch(ctx context.Context, baseURL string, gauges map[string]float64, p
 		return
 	}
 
-	err := sendBatch(ctx, baseURL, metrics)
+	err := a.sendBatch(ctx, metrics)
 	if err != nil {
 		zap.L().Error("ошибка отправки", zap.Error(err))
 	}
