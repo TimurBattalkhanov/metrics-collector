@@ -13,7 +13,7 @@ import (
 )
 
 func newServer(cfg ServerConfig, store storage.Storage, db *sql.DB, logger *zap.SugaredLogger) *http.Server {
-	return &http.Server{Addr: cfg.Address, Handler: handler.NewRouter(store, db, logger)}
+	return &http.Server{Addr: cfg.Address, Handler: handler.NewRouter(store, db, logger, cfg.Key)}
 }
 
 func runServer(srv *http.Server) {

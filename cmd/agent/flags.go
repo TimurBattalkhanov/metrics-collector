@@ -11,6 +11,7 @@ type AgentConfig struct {
 	Address        string
 	ReportInterval int
 	PollInterval   int
+	Key            string
 }
 
 func NewAgentConfig() AgentConfig {
@@ -19,6 +20,7 @@ func NewAgentConfig() AgentConfig {
 	flag.StringVar(&cfg.Address, "a", "localhost:8080", "address and port of the metrics server")
 	flag.IntVar(&cfg.ReportInterval, "r", 10, "report interval in seconds")
 	flag.IntVar(&cfg.PollInterval, "p", 2, "poll interval in seconds")
+	flag.StringVar(&cfg.Key, "k", "", "secret key")
 	flag.Parse()
 
 	if address, ok := os.LookupEnv("ADDRESS"); ok {
@@ -47,5 +49,10 @@ func NewAgentConfig() AgentConfig {
 	if cfg.ReportInterval <= 0 {
 		log.Fatalf("report interval must be greater than 0, provided %d", cfg.ReportInterval)
 	}
+
+	if key, ok := os.LookupEnv("KEY"); ok {
+		cfg.Key = key
+	}
+
 	return cfg
 }

@@ -8,7 +8,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/TimurBattalkhanov/metrics-collector/internal/agent"
+	ag "github.com/TimurBattalkhanov/metrics-collector/internal/agent"
 	"go.uber.org/zap"
 )
 
@@ -29,12 +29,14 @@ func main() {
 	pollInterval := time.Duration(cfg.PollInterval) * time.Second
 	reportInterval := time.Duration(cfg.ReportInterval) * time.Second
 
+	agent := ag.NewAgent(ag.NewClient(cfg.Key), baseURL)
+
 	var pollCount int64
 	var gauges map[string]float64
 	elapsed := time.Duration(0)
 
 	for {
-		gauges = agent.Collect()
+		gauges = ag.Collect()
 		pollCount++
 
 		timer := time.NewTimer(pollInterval)
@@ -47,7 +49,7 @@ func main() {
 		elapsed += pollInterval
 
 		if elapsed >= reportInterval {
-			agent.SendBatch(ctx, baseURL, gauges, pollCount)
+			agent.SendBatch(ctx, gauges, pollCount)
 			elapsed = 0
 		}
 	}

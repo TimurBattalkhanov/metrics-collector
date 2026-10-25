@@ -1,7 +1,12 @@
 package handler
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -32,7 +37,7 @@ func TestUpdateHandler(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			store := repository.NewMemStorage()
 
-			res := prepareServerAndRequest(store, tt.method, tt.path, nil)
+			res := prepareServerAndRequest(store, tt.method, tt.path, nil, "", map[string]string{})
 			defer res.Body.Close()
 
 			if res.StatusCode != tt.wantStatus {
@@ -65,7 +70,7 @@ func TestGetHandler(t *testing.T) {
 			store.UpdateCounter(ctx, "PollCount", 1)
 			store.UpdateGauge(ctx, "Alloc", 100)
 
-			res := prepareServerAndRequest(store, tt.method, tt.path, nil)
+			res := prepareServerAndRequest(store, tt.method, tt.path, nil, "", map[string]string{})
 			defer res.Body.Close()
 
 			if res.StatusCode != tt.wantStatus {
@@ -94,7 +99,7 @@ func TestDefaultHandler_ReturnTableWithMetrics(t *testing.T) {
 <tr><td>counter</td><td>PollCount</td><td>1</td></tr>
 </table></body></html>
 `
-	res := prepareServerAndRequest(store, http.MethodGet, "/", nil)
+	res := prepareServerAndRequest(store, http.MethodGet, "/", nil, "", map[string]string{})
 	defer res.Body.Close()
 
 	body, err := io.ReadAll(res.Body)
@@ -133,7 +138,7 @@ func TestUpdatePostHandler(t *testing.T) {
 			store := repository.NewMemStorage()
 
 			reqBody := strings.NewReader(tt.body)
-			res := prepareServerAndRequest(store, tt.method, `/update`, reqBody)
+			res := prepareServerAndRequest(store, tt.method, `/update`, reqBody, "", map[string]string{})
 			defer res.Body.Close()
 
 			if res.StatusCode != tt.wantStatus {
@@ -193,7 +198,7 @@ func TestValuePostHandler(t *testing.T) {
 			store.UpdateGauge(ctx, "Alloc", 12.5)
 
 			reqBody := strings.NewReader(tt.body)
-			res := prepareServerAndRequest(store, tt.method, `/value`, reqBody)
+			res := prepareServerAndRequest(store, tt.method, `/value`, reqBody, "", map[string]string{})
 			defer res.Body.Close()
 
 			if res.StatusCode != tt.wantStatus {
@@ -269,7 +274,7 @@ func TestBatchUpdatePostHandler(t *testing.T) {
 			store := repository.NewMemStorage()
 
 			reqBody := strings.NewReader(tt.body)
-			res := prepareServerAndRequest(store, tt.method, `/updates`, reqBody)
+			res := prepareServerAndRequest(store, tt.method, `/updates`, reqBody, "", map[string]string{})
 			defer res.Body.Close()
 
 			if res.StatusCode != tt.wantStatus {
@@ -294,13 +299,105 @@ func TestBatchUpdatePostHandler(t *testing.T) {
 	}
 }
 
-func prepareServerAndRequest(storage repository.Storage, method string, path string, body io.Reader) *http.Response {
+// Подпись считается от несжатого тела, поэтому проверка хеша должна стоять после распаковки gzip.
+func TestRouter_SignedGzipRequest(t *testing.T) {
+	ctx := context.Background()
+	key := "secret key"
+	body := `[{"id":"Alloc","type":"gauge","value":12.5},{"id":"PollCount","type":"counter","delta":3}]`
+
+	store := repository.NewMemStorage()
+	headers := map[string]string{
+		"Content-Encoding": "gzip",
+		"HashSHA256":       calcHash(body, key),
+	}
+
+	res := prepareServerAndRequest(store, http.MethodPost, "/updates", bytes.NewReader(gzipBytes(t, body)), key, headers)
+	defer res.Body.Close()
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("получили %d, ожидали %d", res.StatusCode, http.StatusOK)
+	}
+
+	gauges, err := store.GetGauges(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assert.Equal(t, map[string]float64{"Alloc": 12.5}, gauges)
+
+	counters, err := store.GetCounters(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assert.Equal(t, map[string]int64{"PollCount": 3}, counters)
+}
+
+// Подпись ответа считается от несжатого тела, поэтому она должна ставиться до сжатия gzip.
+func TestRouter_SignedGzipResponse(t *testing.T) {
+	key := "secret key"
+
+	store := repository.NewMemStorage()
+	store.UpdateGauge(context.Background(), "Alloc", 12.5)
+	headers := map[string]string{
+		"Content-Type":    "application/json",
+		"Accept-Encoding": "gzip",
+	}
+
+	res := prepareServerAndRequest(store, http.MethodPost, "/value", strings.NewReader(`{"id":"Alloc","type":"gauge"}`), key, headers)
+	defer res.Body.Close()
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("получили %d, ожидали %d", res.StatusCode, http.StatusOK)
+	}
+	if res.Header.Get("Content-Encoding") != "gzip" {
+		t.Fatalf("Content-Encoding: ожидали %q, получили %q", "gzip", res.Header.Get("Content-Encoding"))
+	}
+
+	gzr, err := gzip.NewReader(res.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer gzr.Close()
+	body, err := io.ReadAll(gzr)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(string(body), "12.5") {
+		t.Fatalf("в ответе нет значения метрики: %s", body)
+	}
+	if got, want := res.Header.Get("HashSHA256"), calcHash(string(body), key); got != want {
+		t.Errorf("HashSHA256: ожидали %s, получили %s", want, got)
+	}
+}
+
+func prepareServerAndRequest(storage repository.Storage, method string, path string, body io.Reader, key string, headers map[string]string) *http.Response {
 	req := httptest.NewRequest(method, path, body)
+	for k, v := range headers {
+		req.Header.Add(k, v)
+	}
 	rec := httptest.NewRecorder()
 
 	logger := zap.NewNop().Sugar()
 
-	NewRouter(storage, nil, logger).ServeHTTP(rec, req)
+	NewRouter(storage, nil, logger, key).ServeHTTP(rec, req)
 
 	return rec.Result()
+}
+
+func calcHash(body string, key string) string {
+	h := hmac.New(sha256.New, []byte(key))
+	h.Write([]byte(body))
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+func gzipBytes(t *testing.T, data string) []byte {
+	var buf bytes.Buffer
+	gzw := gzip.NewWriter(&buf)
+	if _, err := gzw.Write([]byte(data)); err != nil {
+		t.Fatal(err)
+	}
+	if err := gzw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
 }
