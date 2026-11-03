@@ -12,6 +12,7 @@ type AgentConfig struct {
 	ReportInterval int
 	PollInterval   int
 	Key            string
+	RateLimit      int
 }
 
 func NewAgentConfig() AgentConfig {
@@ -21,6 +22,7 @@ func NewAgentConfig() AgentConfig {
 	flag.IntVar(&cfg.ReportInterval, "r", 10, "report interval in seconds")
 	flag.IntVar(&cfg.PollInterval, "p", 2, "poll interval in seconds")
 	flag.StringVar(&cfg.Key, "k", "", "secret key")
+	flag.IntVar(&cfg.RateLimit, "l", 1, "max concurrent requests limit")
 	flag.Parse()
 
 	if address, ok := os.LookupEnv("ADDRESS"); ok {
@@ -52,6 +54,18 @@ func NewAgentConfig() AgentConfig {
 
 	if key, ok := os.LookupEnv("KEY"); ok {
 		cfg.Key = key
+	}
+
+	if rateLimitRaw, ok := os.LookupEnv("RATE_LIMIT"); ok {
+		rateLimit, err := strconv.Atoi(rateLimitRaw)
+		if err != nil {
+			log.Fatalf("invalid RATE_LIMIT: %v", err)
+		}
+		cfg.RateLimit = rateLimit
+	}
+
+	if cfg.RateLimit <= 0 {
+		log.Fatalf("max concurrent requests limit must be greater than 0, provided %d", cfg.RateLimit)
 	}
 
 	return cfg
