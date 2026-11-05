@@ -1,15 +1,13 @@
 package middleware
 
 import (
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/TimurBattalkhanov/metrics-collector/internal/sign"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -34,9 +32,6 @@ func TestHashMiddlewareRequest(t *testing.T) {
 		{
 			"No hash header", serverKey, "", http.StatusOK, true,
 		},
-		{
-			"key is empty", "", clientKey, http.StatusOK, true,
-		},
 	}
 
 	for _, tt := range tests {
@@ -55,7 +50,7 @@ func TestHashMiddlewareRequest(t *testing.T) {
 
 			req := httptest.NewRequest(http.MethodPost, "/updates", strings.NewReader(reqBody))
 			if tt.signKey != "" {
-				req.Header.Add("HashSHA256", getHash(tt.signKey, reqBody))
+				req.Header.Add("HashSHA256", sign.CalcHash(tt.signKey, []byte(reqBody)))
 			}
 			rec := httptest.NewRecorder()
 			HashMiddleware(tt.serverKey)(stub).ServeHTTP(rec, req)
@@ -77,12 +72,10 @@ func TestHashMiddlewareResponse(t *testing.T) {
 		serverKey string
 		status    int
 		body      string
-		wantHash  bool
 	}{
-		{"success response with body", serverKey, http.StatusOK, `{"id":"Alloc"}`, true},
-		{"failed response with body", serverKey, http.StatusNotFound, `not found`, true},
-		{"response with empty body", serverKey, http.StatusOK, ``, true},
-		{"response without key", "", http.StatusOK, `{"id":"Alloc"}`, false},
+		{"success response with body", serverKey, http.StatusOK, `{"id":"Alloc"}`},
+		{"failed response with body", serverKey, http.StatusNotFound, `not found`},
+		{"response with empty body", serverKey, http.StatusOK, ``},
 	}
 
 	for _, tt := range tests {
@@ -102,21 +95,9 @@ func TestHashMiddlewareResponse(t *testing.T) {
 			if rec.Header().Get("Content-Type") != "application/json" {
 				t.Errorf("Ответ не содержит ожидаемый content-type")
 			}
-			if tt.wantHash {
-				if getHash(tt.serverKey, tt.body) != rec.Header().Get("HashSHA256") {
-					t.Errorf("Ответ не содержит ожидаемый хэш")
-				}
-			} else {
-				if rec.Header().Get("HashSHA256") != "" {
-					t.Errorf("Ответ не должен содержать хэш если key не передан")
-				}
+			if sign.CalcHash(tt.serverKey, []byte(tt.body)) != rec.Header().Get("HashSHA256") {
+				t.Errorf("Ответ не содержит ожидаемый хэш")
 			}
 		})
 	}
-}
-
-func getHash(key string, body string) string {
-	h := hmac.New(sha256.New, []byte(key))
-	h.Write([]byte(body))
-	return hex.EncodeToString(h.Sum(nil))
 }

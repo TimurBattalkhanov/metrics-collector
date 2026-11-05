@@ -30,7 +30,7 @@ func NewAgent(client *resty.Client, baseURL string) *Agent {
 
 var errBadStatus = errors.New("сервис ответил с кодом ошибки")
 
-func Collect() map[string]float64 {
+func collect() map[string]float64 {
 	var ms runtime.MemStats
 	runtime.ReadMemStats(&ms)
 
@@ -66,7 +66,7 @@ func Collect() map[string]float64 {
 	}
 }
 
-func CollectSystemMetrics() (map[string]float64, error) {
+func collectSystemMetrics() (map[string]float64, error) {
 	m, err := mem.VirtualMemory()
 	if err != nil {
 		return nil, err
@@ -104,7 +104,7 @@ func (a *Agent) SendBatch(ctx context.Context, metrics []models.Metrics) error {
 	return nil
 }
 
-func BuildBatch(gauges map[string]float64, pollCount int64) []models.Metrics {
+func buildBatch(gauges map[string]float64, pollCount int64) []models.Metrics {
 	var metrics []models.Metrics
 	for name, v := range gauges {
 		metric := models.Metrics{
@@ -139,7 +139,7 @@ func RunCollector(ctx context.Context, s *Store, interval time.Duration) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			s.UpdateGauges(Collect())
+			s.UpdateGauges(collect())
 			s.IncPollCount()
 		}
 	}
@@ -153,7 +153,7 @@ func RunSystemCollector(ctx context.Context, s *Store, interval time.Duration) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			metrics, err := CollectSystemMetrics()
+			metrics, err := collectSystemMetrics()
 			if err != nil {
 				zap.L().Error("ошибка получения системных метрик", zap.Error(err))
 				continue
@@ -175,7 +175,7 @@ func RunReporter(ctx context.Context, s *Store, interval time.Duration, jobs cha
 		case <-ticker.C:
 			gauges, pollCount := s.Snapshot()
 			select {
-			case jobs <- BuildBatch(gauges, pollCount):
+			case jobs <- buildBatch(gauges, pollCount):
 			case <-ctx.Done():
 				return
 			}

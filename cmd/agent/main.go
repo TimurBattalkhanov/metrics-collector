@@ -31,7 +31,8 @@ func main() {
 	pollInterval := time.Duration(cfg.PollInterval) * time.Second
 	reportInterval := time.Duration(cfg.ReportInterval) * time.Second
 
-	agent := ag.NewAgent(ag.NewClient(cfg.Key), baseURL)
+	retryDelays := []time.Duration{time.Second, 3 * time.Second, 5 * time.Second}
+	agent := ag.NewAgent(ag.NewClient(cfg.Key, retryDelays), baseURL)
 	store := ag.NewStore()
 	jobs := make(chan []models.Metrics)
 

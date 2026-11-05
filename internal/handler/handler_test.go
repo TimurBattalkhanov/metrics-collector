@@ -4,9 +4,6 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/TimurBattalkhanov/metrics-collector/internal/repository"
+	"github.com/TimurBattalkhanov/metrics-collector/internal/sign"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap"
 )
@@ -299,7 +297,6 @@ func TestBatchUpdatePostHandler(t *testing.T) {
 	}
 }
 
-// Подпись считается от несжатого тела, поэтому проверка хеша должна стоять после распаковки gzip.
 func TestRouter_SignedGzipRequest(t *testing.T) {
 	ctx := context.Background()
 	key := "secret key"
@@ -308,7 +305,7 @@ func TestRouter_SignedGzipRequest(t *testing.T) {
 	store := repository.NewMemStorage()
 	headers := map[string]string{
 		"Content-Encoding": "gzip",
-		"HashSHA256":       calcHash(body, key),
+		"HashSHA256":       sign.CalcHash(key, []byte(body)),
 	}
 
 	res := prepareServerAndRequest(store, http.MethodPost, "/updates", bytes.NewReader(gzipBytes(t, body)), key, headers)
@@ -331,7 +328,6 @@ func TestRouter_SignedGzipRequest(t *testing.T) {
 	assert.Equal(t, map[string]int64{"PollCount": 3}, counters)
 }
 
-// Подпись ответа считается от несжатого тела, поэтому она должна ставиться до сжатия gzip.
 func TestRouter_SignedGzipResponse(t *testing.T) {
 	key := "secret key"
 
@@ -365,9 +361,35 @@ func TestRouter_SignedGzipResponse(t *testing.T) {
 	if !strings.Contains(string(body), "12.5") {
 		t.Fatalf("в ответе нет значения метрики: %s", body)
 	}
-	if got, want := res.Header.Get("HashSHA256"), calcHash(string(body), key); got != want {
+	if got, want := res.Header.Get("HashSHA256"), sign.CalcHash(key, body); got != want {
 		t.Errorf("HashSHA256: ожидали %s, получили %s", want, got)
 	}
+}
+
+func TestRouter_EmptyKey(t *testing.T) {
+	ctx := context.Background()
+	body := `[{"id":"Alloc","type":"gauge","value":12.5}]`
+
+	store := repository.NewMemStorage()
+	headers := map[string]string{
+		"HashSHA256": sign.CalcHash("client key", []byte(body)),
+	}
+
+	res := prepareServerAndRequest(store, http.MethodPost, "/updates", strings.NewReader(body), "", headers)
+	defer res.Body.Close()
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("получили %d, ожидали %d", res.StatusCode, http.StatusOK)
+	}
+	if got := res.Header.Get("HashSHA256"); got != "" {
+		t.Errorf("HashSHA256 не должен ставиться без ключа, получили %q", got)
+	}
+
+	gauges, err := store.GetGauges(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assert.Equal(t, map[string]float64{"Alloc": 12.5}, gauges)
 }
 
 func prepareServerAndRequest(storage repository.Storage, method string, path string, body io.Reader, key string, headers map[string]string) *http.Response {
@@ -382,12 +404,6 @@ func prepareServerAndRequest(storage repository.Storage, method string, path str
 	NewRouter(storage, nil, logger, key).ServeHTTP(rec, req)
 
 	return rec.Result()
-}
-
-func calcHash(body string, key string) string {
-	h := hmac.New(sha256.New, []byte(key))
-	h.Write([]byte(body))
-	return hex.EncodeToString(h.Sum(nil))
 }
 
 func gzipBytes(t *testing.T, data string) []byte {
