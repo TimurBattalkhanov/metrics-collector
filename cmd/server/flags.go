@@ -13,6 +13,7 @@ type ServerConfig struct {
 	FileStoragePath string
 	Restore         bool
 	DatabaseDSN     string
+	Key             string
 }
 
 func NewServerConfig() ServerConfig {
@@ -22,6 +23,7 @@ func NewServerConfig() ServerConfig {
 	flag.StringVar(&cfg.FileStoragePath, "f", "/tmp/metrics-store.json", "file storage path")
 	flag.BoolVar(&cfg.Restore, "r", false, "restore files")
 	flag.StringVar(&cfg.DatabaseDSN, "d", "", "database DSN") // value example postgres://user:password@localhost:5432/postgres
+	flag.StringVar(&cfg.Key, "k", "", "secret key")
 	flag.Parse()
 
 	if address, ok := os.LookupEnv("ADDRESS"); ok {
@@ -54,6 +56,10 @@ func NewServerConfig() ServerConfig {
 
 	if dbDSN, ok := os.LookupEnv("DATABASE_DSN"); ok {
 		cfg.DatabaseDSN = dbDSN
+	}
+
+	if key, ok := os.LookupEnv("KEY"); ok {
+		cfg.Key = key
 	}
 
 	return cfg
