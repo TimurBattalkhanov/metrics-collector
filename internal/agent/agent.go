@@ -6,9 +6,13 @@ import (
 	"fmt"
 	"math/rand"
 	"runtime"
+	"strconv"
+	"time"
 
 	models "github.com/TimurBattalkhanov/metrics-collector/internal/model"
 	"github.com/go-resty/resty/v2"
+	"github.com/shirou/gopsutil/v4/cpu"
+	"github.com/shirou/gopsutil/v4/mem"
 	"go.uber.org/zap"
 )
 
@@ -26,7 +30,7 @@ func NewAgent(client *resty.Client, baseURL string) *Agent {
 
 var errBadStatus = errors.New("сервис ответил с кодом ошибки")
 
-func Collect() map[string]float64 {
+func collect() map[string]float64 {
 	var ms runtime.MemStats
 	runtime.ReadMemStats(&ms)
 
@@ -62,7 +66,28 @@ func Collect() map[string]float64 {
 	}
 }
 
-func (a *Agent) sendBatch(ctx context.Context, metrics []models.Metrics) error {
+func collectSystemMetrics() (map[string]float64, error) {
+	m, err := mem.VirtualMemory()
+	if err != nil {
+		return nil, err
+	}
+	cpus, err := cpu.Percent(0, true)
+	if err != nil {
+		return nil, err
+	}
+	metrics := map[string]float64{
+		"TotalMemory": float64(m.Total),
+		"FreeMemory":  float64(m.Free),
+	}
+	for i, v := range cpus {
+		name := "CPUutilization" + strconv.Itoa(i+1)
+		metrics[name] = v
+	}
+
+	return metrics, nil
+}
+
+func (a *Agent) SendBatch(ctx context.Context, metrics []models.Metrics) error {
 	resp, err := a.client.
 		R().
 		SetContext(ctx).
@@ -79,7 +104,7 @@ func (a *Agent) sendBatch(ctx context.Context, metrics []models.Metrics) error {
 	return nil
 }
 
-func (a *Agent) SendBatch(ctx context.Context, gauges map[string]float64, pollCount int64) {
+func buildBatch(gauges map[string]float64, pollCount int64) []models.Metrics {
 	var metrics []models.Metrics
 	for name, v := range gauges {
 		metric := models.Metrics{
@@ -95,12 +120,65 @@ func (a *Agent) SendBatch(ctx context.Context, gauges map[string]float64, pollCo
 		Delta: &pollCount,
 	})
 
-	if len(metrics) == 0 {
-		return
-	}
+	return metrics
+}
 
-	err := a.sendBatch(ctx, metrics)
-	if err != nil {
-		zap.L().Error("ошибка отправки", zap.Error(err))
+func (a *Agent) RunWorker(ctx context.Context, jobs <-chan []models.Metrics) {
+	for batch := range jobs {
+		if err := a.SendBatch(ctx, batch); err != nil {
+			zap.L().Error("ошибка отправки", zap.Error(err))
+		}
+	}
+}
+
+func RunCollector(ctx context.Context, s *Store, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.UpdateGauges(collect())
+			s.IncPollCount()
+		}
+	}
+}
+
+func RunSystemCollector(ctx context.Context, s *Store, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			metrics, err := collectSystemMetrics()
+			if err != nil {
+				zap.L().Error("ошибка получения системных метрик", zap.Error(err))
+				continue
+			}
+			s.UpdateGauges(metrics)
+		}
+	}
+}
+
+func RunReporter(ctx context.Context, s *Store, interval time.Duration, jobs chan<- []models.Metrics) {
+	defer close(jobs)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			gauges, pollCount := s.Snapshot()
+			select {
+			case jobs <- buildBatch(gauges, pollCount):
+			case <-ctx.Done():
+				return
+			}
+		}
 	}
 }

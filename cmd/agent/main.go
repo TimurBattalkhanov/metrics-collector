@@ -5,10 +5,12 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	ag "github.com/TimurBattalkhanov/metrics-collector/internal/agent"
+	models "github.com/TimurBattalkhanov/metrics-collector/internal/model"
 	"go.uber.org/zap"
 )
 
@@ -29,30 +31,32 @@ func main() {
 	pollInterval := time.Duration(cfg.PollInterval) * time.Second
 	reportInterval := time.Duration(cfg.ReportInterval) * time.Second
 
-	agent := ag.NewAgent(ag.NewClient(cfg.Key), baseURL)
+	retryDelays := []time.Duration{time.Second, 3 * time.Second, 5 * time.Second}
+	agent := ag.NewAgent(ag.NewClient(cfg.Key, retryDelays), baseURL)
+	store := ag.NewStore()
+	jobs := make(chan []models.Metrics)
 
-	var pollCount int64
-	var gauges map[string]float64
-	elapsed := time.Duration(0)
+	var wg sync.WaitGroup
 
-	for {
-		gauges = ag.Collect()
-		pollCount++
+	wg.Go(func() {
+		ag.RunCollector(ctx, store, pollInterval)
+	})
 
-		timer := time.NewTimer(pollInterval)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return
-		case <-timer.C:
-		}
-		elapsed += pollInterval
+	wg.Go(func() {
+		ag.RunSystemCollector(ctx, store, pollInterval)
+	})
 
-		if elapsed >= reportInterval {
-			agent.SendBatch(ctx, gauges, pollCount)
-			elapsed = 0
-		}
+	for i := 0; i < cfg.RateLimit; i++ {
+		wg.Go(func() {
+			agent.RunWorker(ctx, jobs)
+		})
 	}
+
+	wg.Go(func() {
+		ag.RunReporter(ctx, store, reportInterval, jobs)
+	})
+
+	wg.Wait()
 }
 
 func serverURL(url string) string {

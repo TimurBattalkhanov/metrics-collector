@@ -6,22 +6,21 @@ import (
 	"github.com/go-resty/resty/v2"
 )
 
-var retryDelays = []time.Duration{time.Second, 3 * time.Second, 5 * time.Second}
-
-func retryAfter(_ *resty.Client, resp *resty.Response) (time.Duration, error) {
-	return retryDelays[resp.Request.Attempt-1], nil
+func retryAfter(retryDelays []time.Duration) resty.RetryAfterFunc {
+	return func(_ *resty.Client, resp *resty.Response) (time.Duration, error) {
+		return retryDelays[resp.Request.Attempt-1], nil
+	}
 }
 
-func getMaxWaitRetry() time.Duration {
-	return retryDelays[len(retryDelays)-1]
-}
-
-func NewClient(key string) *resty.Client {
-	return resty.New().
+func NewClient(key string, retryDelays []time.Duration) *resty.Client {
+	c := resty.New().
 		SetTimeout(time.Second).
 		SetRetryCount(len(retryDelays)).
-		SetRetryMaxWaitTime(getMaxWaitRetry()).
-		SetRetryAfter(retryAfter).
-		OnBeforeRequest(addKeyIfExist(key)).
-		OnBeforeRequest(gzipCompressBody)
+		SetRetryMaxWaitTime(retryDelays[len(retryDelays)-1]).
+		SetRetryAfter(retryAfter(retryDelays))
+	if len(key) > 0 {
+		c.OnBeforeRequest(addKey(key))
+	}
+	c.OnBeforeRequest(gzipCompressBody)
+	return c
 }

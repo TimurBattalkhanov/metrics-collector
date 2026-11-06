@@ -5,23 +5,61 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
-	"encoding/hex"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	models "github.com/TimurBattalkhanov/metrics-collector/internal/model"
 )
 
 func TestCollect(t *testing.T) {
-	gauges := Collect()
+	gauges := collect()
 
 	for _, name := range []string{"Alloc", "HeapInuse", "Sys", "RandomValue"} {
 		if _, ok := gauges[name]; !ok {
 			t.Errorf("метрика %s не собрана", name)
 		}
+	}
+}
+
+func TestCollectSystem(t *testing.T) {
+	gauges, err := collectSystemMetrics()
+	if err != nil {
+		t.Fatalf("CollectSystemMetrics: %v", err)
+	}
+
+	if gauges["TotalMemory"] <= 0 {
+		t.Errorf("TotalMemory должна быть больше 0, получено %v", gauges["TotalMemory"])
+	}
+	if _, ok := gauges["FreeMemory"]; !ok {
+		t.Errorf("метрика FreeMemory не собрана")
+	}
+
+	cpus := 0
+	for name := range gauges {
+		if strings.HasPrefix(name, "CPUutilization") {
+			cpus++
+		}
+	}
+	if cpus == 0 {
+		t.Fatalf("не собрано ни одной метрики CPUutilization")
+	}
+
+	for i := 1; i <= cpus; i++ {
+		name := "CPUutilization" + strconv.Itoa(i)
+		if _, ok := gauges[name]; !ok {
+			t.Errorf("метрика %s не собрана", name)
+		}
+	}
+	if _, ok := gauges["CPUutilization0"]; ok {
+		t.Errorf("нумерация CPUutilization должна начинаться с 1")
 	}
 }
 
@@ -34,9 +72,11 @@ func TestSendBatch(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	agent := NewAgent(NewClient(""), srv.URL)
+	agent := NewAgent(NewClient("", testRetryDelays()), srv.URL)
 
-	agent.SendBatch(context.Background(), map[string]float64{"Alloc": 12.5}, 3)
+	if err := agent.SendBatch(context.Background(), buildBatch(map[string]float64{"Alloc": 12.5}, 3)); err != nil {
+		t.Fatalf("SendBatch: %v", err)
+	}
 	if len(path) != 1 {
 		t.Fatalf("expected 1 paths, got %d", len(path))
 	}
@@ -72,10 +112,14 @@ func TestSendBatchGzip(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	agent := NewAgent(NewClient(""), srv.URL)
+	agent := NewAgent(NewClient("", testRetryDelays()), srv.URL)
 
-	agent.SendBatch(context.Background(), map[string]float64{"Alloc": 12.5}, 3)
-	agent.SendBatch(context.Background(), map[string]float64{"Alloc": 13.5}, 4)
+	if err := agent.SendBatch(context.Background(), buildBatch(map[string]float64{"Alloc": 12.5}, 3)); err != nil {
+		t.Fatalf("SendBatch: %v", err)
+	}
+	if err := agent.SendBatch(context.Background(), buildBatch(map[string]float64{"Alloc": 13.5}, 4)); err != nil {
+		t.Fatalf("SendBatch: %v", err)
+	}
 
 	if len(received) != 2 {
 		t.Fatalf("requests: expected %d but actual is %d", 2, len(received))
@@ -139,15 +183,17 @@ func TestSendBatchHashed(t *testing.T) {
 
 		h := hmac.New(sha256.New, []byte(key))
 		h.Write(body)
-		expectedHash = hex.EncodeToString(h.Sum(nil))
+		expectedHash = base64.StdEncoding.EncodeToString(h.Sum(nil))
 
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
 
-	agent := NewAgent(NewClient(key), srv.URL)
+	agent := NewAgent(NewClient(key, testRetryDelays()), srv.URL)
 
-	agent.SendBatch(context.Background(), map[string]float64{"Alloc": 12.5}, 3)
+	if err := agent.SendBatch(context.Background(), buildBatch(map[string]float64{"Alloc": 12.5}, 3)); err != nil {
+		t.Fatalf("SendBatch: %v", err)
+	}
 
 	if expectedHash == "" || srcHash == "" {
 		t.Errorf("HashSHA256 must not be empty")
@@ -173,8 +219,10 @@ func TestSendBatchNotHashed(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	agent := NewAgent(NewClient(""), srv.URL)
-	agent.SendBatch(context.Background(), map[string]float64{"Alloc": 12.5}, 3)
+	agent := NewAgent(NewClient("", testRetryDelays()), srv.URL)
+	if err := agent.SendBatch(context.Background(), buildBatch(map[string]float64{"Alloc": 12.5}, 3)); err != nil {
+		t.Fatalf("SendBatch: %v", err)
+	}
 
 	if len(path) != 1 {
 		t.Fatalf("expected 1 paths, got %d", len(path))
@@ -182,4 +230,67 @@ func TestSendBatchNotHashed(t *testing.T) {
 	if path[0] != expected {
 		t.Fatalf("expected %s, got %s", expected, path[0])
 	}
+}
+
+func TestRunWorkerRateLimit(t *testing.T) {
+	const (
+		rateLimit = 2
+		jobsCount = 10
+	)
+
+	var (
+		mu       sync.Mutex
+		inFlight int
+		maxSeen  int
+		total    int
+	)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		inFlight++
+		total++
+		if inFlight > maxSeen {
+			maxSeen = inFlight
+		}
+		mu.Unlock()
+
+		time.Sleep(10 * time.Millisecond)
+
+		mu.Lock()
+		inFlight--
+		mu.Unlock()
+
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	agent := NewAgent(NewClient("", testRetryDelays()), srv.URL)
+	jobs := make(chan []models.Metrics)
+
+	var wg sync.WaitGroup
+	for range rateLimit {
+		wg.Go(func() {
+			agent.RunWorker(context.Background(), jobs)
+		})
+	}
+
+	for i := range jobsCount {
+		jobs <- buildBatch(map[string]float64{"Alloc": float64(i)}, 1)
+	}
+	close(jobs)
+	wg.Wait()
+
+	if total != jobsCount {
+		t.Errorf("expected %d requests, got %d", jobsCount, total)
+	}
+	if maxSeen > rateLimit {
+		t.Errorf("expected at most %d concurrent requests, got %d", rateLimit, maxSeen)
+	}
+	if maxSeen < rateLimit {
+		t.Errorf("expected workers to run in parallel (%d), got %d", rateLimit, maxSeen)
+	}
+}
+
+func testRetryDelays() []time.Duration {
+	return []time.Duration{time.Millisecond, time.Millisecond, time.Millisecond}
 }

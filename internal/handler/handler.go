@@ -21,7 +21,9 @@ func NewRouter(s repository.Storage, db *sql.DB, logger *zap.SugaredLogger, key 
 	r := chi.NewRouter()
 	r.Use(middlewares.HTTPLogging(logger))
 	r.Use(middlewares.GzipMiddleware)
-	r.Use(middlewares.HashMiddleware(key))
+	if key != "" {
+		r.Use(middlewares.HashMiddleware(key))
+	}
 	r.Use(middleware.StripSlashes)
 	r.Get("/", DefaultHandler(s))
 	r.Get("/value/{type}/{name}", GetHandler(s))
